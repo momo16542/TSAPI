@@ -21,7 +21,7 @@ namespace TS.TimeTrigger
         [Function("BankTaiwanInsert")]
         // [CosmosDBOutput("TSAPI", "BankTaiwanSpotRate",
         // Connection = "CosmosDbConnectionString", CreateIfNotExists = true)]
-        public async Task<MultiResponse> Run([TimerTrigger("0 0 18 * * *")] MyInfo myTimer)
+        public async Task<MultiResponse> Run([TimerTrigger("0 1 11 * * *")] MyInfo myTimer)
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
             _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus.Next}");            
