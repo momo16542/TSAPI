@@ -23,7 +23,7 @@ namespace TS.TimeTrigger
         public async Task<MultiResponse> Run([TimerTrigger("0 1 11 * * *")] MyInfo myTimer)
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
-            _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus.Next}");
+            _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus?.Next}");
             var list = await DownloadAndParseExchangeRates();
             _logger.LogInformation($"fx rate completed");
             return new MultiResponse() { Document = list };
