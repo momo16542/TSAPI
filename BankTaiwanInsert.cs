@@ -20,7 +20,7 @@ namespace TS.TimeTrigger
         }
 
         [Function("BankTaiwanInsert")]
-        public async Task<MultiResponse> Run([TimerTrigger("0 1 11 * * *")] MyInfo myTimer)
+        public async Task<MultiResponse> Run([TimerTrigger("0 0 10 * * *")] MyInfo myTimer)
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
             _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus?.Next}");
@@ -36,7 +36,6 @@ namespace TS.TimeTrigger
 
             DateTime targetDate = DateTime.UtcNow.AddHours(8).Date;
             string csvData = null;
-            DateTime resolvedDate = targetDate;
 
             using (var httpClient = new HttpClient())
             {
@@ -55,7 +54,6 @@ namespace TS.TimeTrigger
                     }
 
                     csvData = content;
-                    resolvedDate = tryDate;
                     break;
                 }
             }
@@ -76,7 +74,7 @@ namespace TS.TimeTrigger
                 {
                     list.Add(new BankTaiwanSpotRate()
                     {
-                        Date = resolvedDate.ToString("yyyy/MM/dd"),
+                        Date = targetDate.ToString("yyyy/MM/dd"),
                         Currency = item.幣別,
                         SpotRateBuying = item.即期,
                         SpotRateSelling = item.即期1,
