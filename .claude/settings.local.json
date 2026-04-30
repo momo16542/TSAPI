@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet list *)",
+      "Bash(dotnet restore *)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet nuget *)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.sdk/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.extensions.cosmosdb/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.extensions.http/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.extensions.timer/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.azure.webjobs.extensions.cosmosdb/**)",
+      "Read(//c/Users/ts/.nuget/packages/microsoft.extensions.azure/**)"
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -19,8 +19,6 @@ namespace TS.TimeTrigger
         }
 
         [Function("BankTaiwanInsert")]
-        // [CosmosDBOutput("TSAPI", "BankTaiwanSpotRate",
-        // Connection = "CosmosDbConnectionString", CreateIfNotExists = true)]
         public async Task<MultiResponse> Run([TimerTrigger("0 1 11 * * *")] MyInfo myTimer)
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
@@ -32,10 +30,39 @@ namespace TS.TimeTrigger
         private async Task<List<BankTaiwanSpotRate>> DownloadAndParseExchangeRates()
         {
             List<BankTaiwanSpotRate> list = new List<BankTaiwanSpotRate>();
-            string csvData;
+            const string NoDataMessage = "很抱歉，本次查詢找不到任何一筆資料！";
+            const int MaxLookbackDays = 30;
+
+            DateTime targetDate = DateTime.UtcNow.AddHours(8).Date;
+            string csvData = null;
+            DateTime resolvedDate = targetDate;
+
             using (var httpClient = new HttpClient())
             {
-                csvData = await httpClient.GetStringAsync("https://rate.bot.com.tw/xrt/flcsv/0/day");
+                for (int i = 0; i < MaxLookbackDays; i++)
+                {
+                    DateTime tryDate = targetDate.AddDays(-i);
+                    string url = $"https://rate.bot.com.tw/xrt/flcsv/0/{tryDate:yyyy-MM-dd}";
+                    _logger.LogInformation($"Trying to download exchange rates from: {url}");
+
+                    string content = await httpClient.GetStringAsync(url);
+
+                    if (content.Contains(NoDataMessage))
+                    {
+                        _logger.LogInformation($"No data for {tryDate:yyyy-MM-dd}, trying previous day.");
+                        continue;
+                    }
+
+                    csvData = content;
+                    resolvedDate = tryDate;
+                    break;
+                }
+            }
+
+            if (csvData == null)
+            {
+                _logger.LogWarning($"No exchange rate data found within {MaxLookbackDays} days lookback.");
+                return list;
             }
 
             var stringReader = new StringReader(csvData);
@@ -47,7 +74,7 @@ namespace TS.TimeTrigger
                 {
                     list.Add(new BankTaiwanSpotRate()
                     {
-                        Date = DateTime.UtcNow.ToString("yyyy/MM/dd"),
+                        Date = resolvedDate.ToString("yyyy/MM/dd"),
                         Currency = item.幣別,
                         SpotRateBuying = item.即期,
                         SpotRateSelling = item.即期1,
