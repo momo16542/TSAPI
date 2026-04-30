@@ -1,11 +1,12 @@
-﻿using System.Net;
+﻿using CsvHelper;
+using CsvHelper.Configuration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Extensions.Logging;
-using CsvHelper.Configuration;
 using Microsoft.Azure.WebJobs.Extensions.CosmosDB;
-using CsvHelper;
+using Microsoft.Extensions.Logging;
 using System.Globalization;
+using System.Net;
+using TSAPI;
 
 namespace TS.TimeTrigger
 {
@@ -22,7 +23,7 @@ namespace TS.TimeTrigger
         public async Task<MultiResponse> Run([TimerTrigger("0 1 11 * * *")] MyInfo myTimer)
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
-            _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus.Next}");            
+            _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus.Next}");
             var list = await DownloadAndParseExchangeRates();
             _logger.LogInformation($"fx rate completed");
             return new MultiResponse() { Document = list };
@@ -62,6 +63,7 @@ namespace TS.TimeTrigger
             if (csvData == null)
             {
                 _logger.LogWarning($"No exchange rate data found within {MaxLookbackDays} days lookback.");
+                await TelegramNotify.SendNotify("沒抓到匯率，更新失敗", _logger);
                 return list;
             }
 
@@ -82,7 +84,7 @@ namespace TS.TimeTrigger
                     });
 
                 }
-
+                await TelegramNotify.SendNotify($"{DateTime.UtcNow.AddHours(8)} 匯率更新成功", _logger);
                 return list;
             }
         }
