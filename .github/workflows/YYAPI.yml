@@ -21,12 +21,16 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_CORE_VERSION }}
-    - name: Restore
-      run: dotnet restore "${{ env.WORKING_DIRECTORY }}"
-    - name: Build
-      run: dotnet build "${{ env.WORKING_DIRECTORY }}" --configuration ${{ env.CONFIGURATION }} --no-restore
     - name: Publish
-      run: dotnet publish "${{ env.WORKING_DIRECTORY }}" --configuration ${{ env.CONFIGURATION }} --no-build --output "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
+      run: dotnet publish "${{ env.WORKING_DIRECTORY }}" --configuration ${{ env.CONFIGURATION }} --output "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
+    - name: Verify .azurefunctions directory exists
+      run: |
+        if [ ! -d "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/.azurefunctions" ]; then
+          echo "::error::.azurefunctions directory missing from publish output. Flex Consumption deploy will fail."
+          ls -la "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
+          exit 1
+        fi
+        echo "OK — .azurefunctions directory present."
     - name: Publish Artifacts
       uses: actions/upload-artifact@v4
       with:
