@@ -61,7 +61,7 @@ namespace TS.TimeTrigger
             if (csvData == null)
             {
                 _logger.LogWarning($"No exchange rate data found within {MaxLookbackDays} days lookback.");
-                await TelegramNotify.SendNotify("沒抓到匯率，更新失敗", _logger, "3784964525");
+                await TelegramNotify.SendNotify("沒抓到匯率，更新失敗", _logger, "2");
                 return list;
             }
 
@@ -82,7 +82,7 @@ namespace TS.TimeTrigger
                     });
 
                 }
-                await TelegramNotify.SendNotify($"{DateTime.UtcNow.AddHours(8)} 匯率更新成功", _logger, "3784964525");
+                await TelegramNotify.SendNotify($"{DateTime.UtcNow.AddHours(8)} 匯率更新成功", _logger, "2");
                 return list;
             }
         }

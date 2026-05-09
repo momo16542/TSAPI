@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -42,7 +42,7 @@ namespace TS.API
                     }
                     catch (JsonException)
                     {
-                        message = body; // 不是 JSON 就當純文字
+                        message = body; // 不是 JSON 就當純文
                     }
                 }
             }
