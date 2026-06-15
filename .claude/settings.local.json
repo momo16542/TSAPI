@@ -11,7 +11,11 @@
       "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.extensions.http/**)",
       "Read(//c/Users/ts/.nuget/packages/microsoft.azure.functions.worker.extensions.timer/**)",
       "Read(//c/Users/ts/.nuget/packages/microsoft.azure.webjobs.extensions.cosmosdb/**)",
-      "Read(//c/Users/ts/.nuget/packages/microsoft.extensions.azure/**)"
+      "Read(//c/Users/ts/.nuget/packages/microsoft.extensions.azure/**)",
+      "Bash(git rm *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git add *)",
+      "Bash(git push *)"
     ]
   }
 }
