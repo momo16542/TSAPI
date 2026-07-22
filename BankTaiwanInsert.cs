@@ -24,9 +24,19 @@ namespace TS.TimeTrigger
         {
             _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
             _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus?.Next}");
-            var list = await DownloadAndParseExchangeRates();
-            _logger.LogInformation($"fx rate completed");
-            return new MultiResponse() { Document = list };
+            try
+            {
+                var list = await DownloadAndParseExchangeRates();
+                _logger.LogInformation($"fx rate completed");
+                return new MultiResponse() { Document = list };
+            }
+            catch (Exception ex)
+            {
+                // 保底：任何未預期的錯誤（逾時、CSV 解析失敗等）都發 Telegram 通知
+                _logger.LogError(ex, "BankTaiwanInsert failed unexpectedly");
+                await TelegramNotify.SendNotify($"匯率更新失敗（未預期錯誤）：{ex.GetType().Name} {ex.Message}", _logger, "2");
+                return new MultiResponse() { Document = new List<BankTaiwanSpotRate>() };
+            }
         }
         private async Task<List<BankTaiwanSpotRate>> DownloadAndParseExchangeRates()
         {
@@ -39,13 +49,31 @@ namespace TS.TimeTrigger
 
             using (var httpClient = new HttpClient())
             {
+                // 模擬瀏覽器請求，避免被台銀網站的防爬蟲機制擋下
+                httpClient.DefaultRequestHeaders.Add("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
+                httpClient.DefaultRequestHeaders.Add("Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+                httpClient.DefaultRequestHeaders.Add("Accept-Language", "zh-TW,zh;q=0.9,en;q=0.8");
+                httpClient.DefaultRequestHeaders.Add("Referer", "https://rate.bot.com.tw/xrt?Lang=zh-TW");
+
                 for (int i = 0; i < MaxLookbackDays; i++)
                 {
                     DateTime tryDate = targetDate.AddDays(-i);
                     string url = $"https://rate.bot.com.tw/xrt/flcsv/0/{tryDate:yyyy-MM-dd}";
                     _logger.LogInformation($"Trying to download exchange rates from: {url}");
 
-                    string content = await httpClient.GetStringAsync(url);
+                    string content;
+                    try
+                    {
+                        content = await httpClient.GetStringAsync(url);
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        _logger.LogError(ex, $"Request blocked or failed for {tryDate:yyyy-MM-dd} (StatusCode: {ex.StatusCode})");
+                        await TelegramNotify.SendNotify($"匯率下載被擋 (HTTP {(int?)ex.StatusCode})，更新失敗", _logger, "2");
+                        return list;
+                    }
 
                     if (content.Contains(NoDataMessage))
                     {
