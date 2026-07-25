@@ -14,8 +14,10 @@ namespace TSAPI
     {
         private static string keyVaultUrl = Environment.GetEnvironmentVariable("KEY_VAULT_URL")
                                             ?? throw new InvalidOperationException("KEY_VAULT_URL 環境變數未設定");
+        // 舊的 -5030274644 已失效：群組升級為超級群組後 id 改變。
+        // 正式環境靠 TELEGRAM_CHAT_ID 設定，這裡只是後備值。
         private static string chatId = Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID")
-                                       ?? "-5030274644"; // 預設可寫死測試用
+                                       ?? "-1003784964525";
         private static string threadId = Environment.GetEnvironmentVariable("TELEGRAM_THREAD_ID");
 
         public static async Task<(bool ok, int statusCode, string detail)> SendNotify(

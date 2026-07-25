@@ -14,8 +14,10 @@ internal static class Config
 
     public static string? KeyVaultUrl => Environment.GetEnvironmentVariable("KEY_VAULT_URL");
 
+    // 原本的 -5030274644 已失效：該群組升級為超級群組後 id 改變，
+    // 送出會得到 400 group chat was upgraded to a supergroup chat
     public static string TelegramChatId =>
-        Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID") ?? "-5030274644";
+        Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID") ?? "-1003784964525";
 
     public static string? TelegramThreadId =>
         Environment.GetEnvironmentVariable("TELEGRAM_THREAD_ID") ?? "2";
