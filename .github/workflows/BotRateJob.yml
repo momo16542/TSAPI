@@ -9,10 +9,10 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_NAME: tsapiacr
+  ACR_NAME: yanyueacr
   IMAGE_NAME: botratejob
   JOB_NAME: botrate-job
-  RESOURCE_GROUP: TSAPI
+  RESOURCE_GROUP: Yanyue
 
 jobs:
   build-and-deploy:

@@ -53,10 +53,10 @@ dotnet run --project BotRateJob\BotRateJob.csproj
 以下變數依實際情況調整。
 
 ```bash
-RG=TSAPI
+RG=Yanyue
 LOCATION=eastasia
-ACR=tsapiacr
-ENV_NAME=tsapi-aca-env
+ACR=yanyueacr
+ENV_NAME=yanyue-aca-env
 JOB=botrate-job
 
 # 1. Container Registry（Basic）
@@ -80,7 +80,7 @@ az containerapp job create \
   --replica-retry-limit 1 \
   --registry-server $ACR.azurecr.io \
   --system-assigned \
-  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate KEY_VAULT_URL=https://<你的 keyvault>.vault.azure.net/
+  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate KEY_VAULT_URL=https://YanyueKeyVault.vault.azure.net/
 
 # 5. Cosmos 連線字串設為 secret
 az containerapp job secret set -g $RG -n $JOB --secrets cosmos-conn="<連線字串>"
@@ -91,7 +91,7 @@ az containerapp job update -g $RG -n $JOB \
 PRINCIPAL=$(az containerapp job show -g $RG -n $JOB --query identity.principalId -o tsv)
 az role assignment create --assignee $PRINCIPAL --role AcrPull \
   --scope $(az acr show -g $RG -n $ACR --query id -o tsv)
-az keyvault set-policy -n <你的 keyvault> --object-id $PRINCIPAL --secret-permissions get
+az keyvault set-policy -n YanyueKeyVault --object-id $PRINCIPAL --secret-permissions get
 
 # 7. 手動跑一次驗證
 az containerapp job start -g $RG -n $JOB
@@ -119,3 +119,6 @@ az containerapp job execution list -g $RG -n $JOB -o table
 - PHP / IDR / KRW / VND / MYR 台銀沒有即期匯率，CSV 給 `0.00000`，
   程式照原本 Function 的行為寫入 0（表格路徑的 `-` 也一併轉成 0）。
 - 挑戰通過需要約 50 秒，`--replica-timeout` 不要設太短。
+- 容器 `BankTaiwanSpotRate` 的分割索引鍵是 `/BankTaiwanSpotRate`，但文件本身並沒有這個屬性
+  （原本 Function 的輸出繫結也是如此），所有文件因此落在 undefined 分割區。
+  程式刻意不明確指定 PartitionKey，由 SDK 從文件推斷，維持與既有資料相同的行為。
