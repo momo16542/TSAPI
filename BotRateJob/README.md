@@ -87,12 +87,14 @@ az role assignment create --assignee-object-id $PRINCIPAL \
   --scope $(az keyvault show -g $RG -n YanyueKeyVault --query id -o tsv)
 
 # 5. 建立排程 Job
-#    cron 是 UTC：02:00 UTC = 台北 10:00（台銀約 09:00 開始掛牌）
+#    cron 是 UTC：08:00 UTC = 台北 16:00
+#    台銀營業到 15:30，16:00 抓到的是當日營業時間的最後一筆牌價（即收盤價）。
+#    若晚於此時間執行，網頁會換成「非營業時間牌告匯率」，是另一組數字。
 #    AZURE_CLIENT_ID 必須設定，DefaultAzureCredential 才知道要用哪個使用者指派身分
 az containerapp job create \
   -g $RG -n $JOB --environment $ENV_NAME \
   --trigger-type Schedule \
-  --cron-expression "0 2 * * *" \
+  --cron-expression "0 8 * * *" \
   --image $ACR.azurecr.io/botratejob:latest \
   --cpu 1.0 --memory 2.0Gi \
   --replica-timeout 600 \
