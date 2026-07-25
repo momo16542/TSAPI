@@ -80,7 +80,7 @@ az containerapp job create \
   --replica-retry-limit 1 \
   --registry-server $ACR.azurecr.io \
   --system-assigned \
-  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate KEY_VAULT_URL=https://YanyueKeyVault.vault.azure.net/
+  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate KEY_VAULT_URL=https://yanyuekeyvault.vault.azure.net/
 
 # 5. Cosmos 連線字串設為 secret
 az containerapp job secret set -g $RG -n $JOB --secrets cosmos-conn="<連線字串>"
@@ -91,7 +91,9 @@ az containerapp job update -g $RG -n $JOB \
 PRINCIPAL=$(az containerapp job show -g $RG -n $JOB --query identity.principalId -o tsv)
 az role assignment create --assignee $PRINCIPAL --role AcrPull \
   --scope $(az acr show -g $RG -n $ACR --query id -o tsv)
-az keyvault set-policy -n YanyueKeyVault --object-id $PRINCIPAL --secret-permissions get
+# YanyueKeyVault 使用 RBAC 授權模式，不是存取原則
+az role assignment create --assignee $PRINCIPAL --role "Key Vault Secrets User" \
+  --scope $(az keyvault show -g $RG -n YanyueKeyVault --query id -o tsv)
 
 # 7. 手動跑一次驗證
 az containerapp job start -g $RG -n $JOB
