@@ -45,9 +45,18 @@ namespace TS.TimeTrigger
             const int MaxLookbackDays = 30;
 
             DateTime targetDate = DateTime.UtcNow.AddHours(8).Date;
+            DateTime dataDate = targetDate;
             string csvData = null;
 
-            using (var httpClient = new HttpClient())
+            // 保留 cookie，讓防爬蟲挑戰通過後的 cookie 能沿用到後續請求
+            var handler = new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                CookieContainer = new CookieContainer(),
+                UseCookies = true
+            };
+
+            using (var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) })
             {
                 // 模擬瀏覽器請求，避免被台銀網站的防爬蟲機制擋下
                 httpClient.DefaultRequestHeaders.Add("User-Agent",
@@ -56,6 +65,13 @@ namespace TS.TimeTrigger
                     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
                 httpClient.DefaultRequestHeaders.Add("Accept-Language", "zh-TW,zh;q=0.9,en;q=0.8");
                 httpClient.DefaultRequestHeaders.Add("Referer", "https://rate.bot.com.tw/xrt?Lang=zh-TW");
+                httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+                httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
+                httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
+                httpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
+
+                // 先打一次首頁取得 cookie，直接抓 CSV 較容易觸發挑戰頁
+                await WarmUpAsync(httpClient);
 
                 for (int i = 0; i < MaxLookbackDays; i++)
                 {
@@ -66,12 +82,26 @@ namespace TS.TimeTrigger
                     string content;
                     try
                     {
-                        content = await httpClient.GetStringAsync(url);
+                        content = await FetchWithRetryAsync(httpClient, url);
                     }
                     catch (HttpRequestException ex)
                     {
                         _logger.LogError(ex, $"Request blocked or failed for {tryDate:yyyy-MM-dd} (StatusCode: {ex.StatusCode})");
                         await TelegramNotify.SendNotify($"匯率下載被擋 (HTTP {(int?)ex.StatusCode})，更新失敗", _logger, "2");
+                        return list;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        _logger.LogError(ex, $"Request timed out for {tryDate:yyyy-MM-dd}");
+                        await TelegramNotify.SendNotify("匯率下載逾時，更新失敗", _logger, "2");
+                        return list;
+                    }
+
+                    if (content == null)
+                    {
+                        // 重試後仍是防爬蟲挑戰頁，繼續往前試也只會被擋，直接結束
+                        _logger.LogError("Blocked by anti-bot challenge page, giving up.");
+                        await TelegramNotify.SendNotify("匯率下載被防爬蟲攔截（Challenge Validation），更新失敗", _logger, "2");
                         return list;
                     }
 
@@ -82,6 +112,7 @@ namespace TS.TimeTrigger
                     }
 
                     csvData = content;
+                    dataDate = tryDate;
                     break;
                 }
             }
@@ -93,8 +124,14 @@ namespace TS.TimeTrigger
                 return list;
             }
 
+            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                // 保底：真的遇到格式怪異的欄位時略過，不要整批中斷
+                BadDataFound = null
+            };
+
             var stringReader = new StringReader(csvData);
-            using (var csvReader = new CsvReader(stringReader, CultureInfo.InvariantCulture))
+            using (var csvReader = new CsvReader(stringReader, csvConfig))
             {
                 csvReader.Context.RegisterClassMap<FXRateCsvPocoMap>();
                 var records = csvReader.GetRecords<FXRateCsvPoco>();
@@ -102,7 +139,7 @@ namespace TS.TimeTrigger
                 {
                     list.Add(new BankTaiwanSpotRate()
                     {
-                        Date = targetDate.ToString("yyyy/MM/dd"),
+                        Date = dataDate.ToString("yyyy/MM/dd"),
                         Currency = item.幣別,
                         SpotRateBuying = item.即期,
                         SpotRateSelling = item.即期1,
@@ -113,6 +150,71 @@ namespace TS.TimeTrigger
                 await TelegramNotify.SendNotify($"{DateTime.UtcNow.AddHours(8)} 匯率更新成功", _logger, "2");
                 return list;
             }
+        }
+
+        /// <summary>
+        /// 先請求一次匯率首頁取得 session cookie，降低直接抓 CSV 被防爬蟲擋下的機率。失敗不影響後續流程。
+        /// </summary>
+        private async Task WarmUpAsync(HttpClient httpClient)
+        {
+            try
+            {
+                await httpClient.GetStringAsync("https://rate.bot.com.tw/xrt?Lang=zh-TW");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Warm-up request failed, continuing anyway.");
+            }
+        }
+
+        /// <summary>
+        /// 下載內容並確認是 CSV。若拿到防爬蟲挑戰頁（HTML）就重試，全部重試都被擋則回傳 null。
+        /// </summary>
+        private async Task<string> FetchWithRetryAsync(HttpClient httpClient, string url)
+        {
+            const int MaxAttempts = 3;
+
+            for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+            {
+                string content = await httpClient.GetStringAsync(url);
+
+                if (!IsChallengePage(content))
+                {
+                    return content;
+                }
+
+                _logger.LogWarning($"Anti-bot challenge page received (attempt {attempt}/{MaxAttempts}) for {url}");
+
+                if (attempt < MaxAttempts)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5 * attempt));
+                    await WarmUpAsync(httpClient);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 台銀被擋時會以 HTTP 200 回傳 HTML 挑戰頁，內容不是 CSV。
+        /// </summary>
+        private static bool IsChallengePage(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return true;
+            }
+
+            // 查無資料（例如假日）是正常回應，交給呼叫端往前一天重找
+            if (content.Contains("很抱歉，本次查詢找不到任何一筆資料！"))
+            {
+                return false;
+            }
+
+            string head = content.Length > 500 ? content.Substring(0, 500) : content;
+            return head.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) >= 0
+                || head.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0
+                || head.IndexOf("Challenge Validation", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
     public class MultiResponse
