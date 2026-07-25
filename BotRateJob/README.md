@@ -58,6 +58,7 @@ LOCATION=eastasia
 ACR=yanyueacr
 ENV_NAME=yanyue-aca-env
 JOB=botrate-job
+IDENTITY=botrate-job-identity
 
 # 1. Container Registry（Basic）
 az acr create -g $RG -n $ACR --sku Basic --admin-enabled false
@@ -68,8 +69,26 @@ az acr build --registry $ACR --image botratejob:latest --file BotRateJob/Dockerf
 # 3. Container Apps 環境
 az containerapp env create -g $RG -n $ENV_NAME --location $LOCATION
 
-# 4. 建立排程 Job
+# 4. 建立使用者指派身分並授權
+#    必須在建立 job 之前完成：系統指派身分要等 job 建好才存在，
+#    但建立 job 當下就要能拉映像，會變成先有雞先有蛋。
+az identity create -g $RG -n $IDENTITY --location $LOCATION
+IDENTITY_ID=$(az identity show -g $RG -n $IDENTITY --query id -o tsv)
+PRINCIPAL=$(az identity show -g $RG -n $IDENTITY --query principalId -o tsv)
+CLIENT_ID=$(az identity show -g $RG -n $IDENTITY --query clientId -o tsv)
+
+az role assignment create --assignee-object-id $PRINCIPAL \
+  --assignee-principal-type ServicePrincipal --role AcrPull \
+  --scope $(az acr show -g $RG -n $ACR --query id -o tsv)
+
+# YanyueKeyVault 使用 RBAC 授權模式，不是存取原則
+az role assignment create --assignee-object-id $PRINCIPAL \
+  --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
+  --scope $(az keyvault show -g $RG -n YanyueKeyVault --query id -o tsv)
+
+# 5. 建立排程 Job
 #    cron 是 UTC：02:00 UTC = 台北 10:00（台銀約 09:00 開始掛牌）
+#    AZURE_CLIENT_ID 必須設定，DefaultAzureCredential 才知道要用哪個使用者指派身分
 az containerapp job create \
   -g $RG -n $JOB --environment $ENV_NAME \
   --trigger-type Schedule \
@@ -78,22 +97,18 @@ az containerapp job create \
   --cpu 1.0 --memory 2.0Gi \
   --replica-timeout 600 \
   --replica-retry-limit 1 \
-  --registry-server $ACR.azurecr.io \
-  --system-assigned \
-  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate KEY_VAULT_URL=https://yanyuekeyvault.vault.azure.net/
+  --registry-server $ACR.azurecr.io --registry-identity $IDENTITY_ID \
+  --mi-user-assigned $IDENTITY_ID \
+  --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate \
+             KEY_VAULT_URL=https://yanyuekeyvault.vault.azure.net/ \
+             AZURE_CLIENT_ID=$CLIENT_ID
 
-# 5. Cosmos 連線字串設為 secret
-az containerapp job secret set -g $RG -n $JOB --secrets cosmos-conn="<連線字串>"
+# 6. Cosmos 連線字串設為 secret
+CONN=$(az cosmosdb keys list -g $RG -n yycosmos --type connection-strings \
+  --query "connectionStrings[?description=='Primary SQL Connection String'].connectionString | [0]" -o tsv)
+az containerapp job secret set -g $RG -n $JOB --secrets "cosmos-conn=$CONN"
 az containerapp job update -g $RG -n $JOB \
   --set-env-vars COSMOS_CONNECTION_STRING=secretref:cosmos-conn
-
-# 6. 讓 job 的受控識別能拉映像與讀 Key Vault
-PRINCIPAL=$(az containerapp job show -g $RG -n $JOB --query identity.principalId -o tsv)
-az role assignment create --assignee $PRINCIPAL --role AcrPull \
-  --scope $(az acr show -g $RG -n $ACR --query id -o tsv)
-# YanyueKeyVault 使用 RBAC 授權模式，不是存取原則
-az role assignment create --assignee $PRINCIPAL --role "Key Vault Secrets User" \
-  --scope $(az keyvault show -g $RG -n YanyueKeyVault --query id -o tsv)
 
 # 7. 手動跑一次驗證
 az containerapp job start -g $RG -n $JOB
