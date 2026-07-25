@@ -55,38 +55,30 @@ dotnet run --project BotRateJob\BotRateJob.csproj
 ```bash
 RG=Yanyue
 LOCATION=eastasia
-ACR=yanyueacr
 ENV_NAME=yanyue-aca-env
 JOB=botrate-job
 IDENTITY=botrate-job-identity
+IMAGE=docker.io/<你的 Docker Hub 帳號>/botratejob:latest
 
-# 1. Container Registry（Basic）
-az acr create -g $RG -n $ACR --sku Basic --admin-enabled false
+# 1. 映像放在 Docker Hub 公開儲存庫，由 GitHub Actions 建置推送
+#    （見「持續部署」一節）。映像不含任何機密，公開無妨。
+#    Container Apps 匿名拉取即可，不需要註冊表憑證。
 
-# 2. 建置並推送映像（在雲端建，本機不需要 Docker）
-az acr build --registry $ACR --image botratejob:latest --file BotRateJob/Dockerfile BotRateJob
-
-# 3. Container Apps 環境
+# 2. Container Apps 環境
 az containerapp env create -g $RG -n $ENV_NAME --location $LOCATION
 
-# 4. 建立使用者指派身分並授權
-#    必須在建立 job 之前完成：系統指派身分要等 job 建好才存在，
-#    但建立 job 當下就要能拉映像，會變成先有雞先有蛋。
+# 3. 建立使用者指派身分並授權讀取 Key Vault
 az identity create -g $RG -n $IDENTITY --location $LOCATION
 IDENTITY_ID=$(az identity show -g $RG -n $IDENTITY --query id -o tsv)
 PRINCIPAL=$(az identity show -g $RG -n $IDENTITY --query principalId -o tsv)
 CLIENT_ID=$(az identity show -g $RG -n $IDENTITY --query clientId -o tsv)
-
-az role assignment create --assignee-object-id $PRINCIPAL \
-  --assignee-principal-type ServicePrincipal --role AcrPull \
-  --scope $(az acr show -g $RG -n $ACR --query id -o tsv)
 
 # YanyueKeyVault 使用 RBAC 授權模式，不是存取原則
 az role assignment create --assignee-object-id $PRINCIPAL \
   --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
   --scope $(az keyvault show -g $RG -n YanyueKeyVault --query id -o tsv)
 
-# 5. 建立排程 Job
+# 4. 建立排程 Job
 #    cron 是 UTC：08:00 UTC = 台北 16:00
 #    台銀營業到 15:30，16:00 抓到的是當日營業時間的最後一筆牌價（即收盤價）。
 #    若晚於此時間執行，網頁會換成「非營業時間牌告匯率」，是另一組數字。
@@ -95,40 +87,55 @@ az containerapp job create \
   -g $RG -n $JOB --environment $ENV_NAME \
   --trigger-type Schedule \
   --cron-expression "0 8 * * *" \
-  --image $ACR.azurecr.io/botratejob:latest \
+  --image $IMAGE \
   --cpu 1.0 --memory 2.0Gi \
   --replica-timeout 600 \
   --replica-retry-limit 1 \
-  --registry-server $ACR.azurecr.io --registry-identity $IDENTITY_ID \
   --mi-user-assigned $IDENTITY_ID \
   --env-vars COSMOS_DATABASE=TSAPI COSMOS_CONTAINER=BankTaiwanSpotRate \
              KEY_VAULT_URL=https://yanyuekeyvault.vault.azure.net/ \
              AZURE_CLIENT_ID=$CLIENT_ID
 
-# 6. Cosmos 連線字串設為 secret
+# 5. Cosmos 連線字串設為 secret
 CONN=$(az cosmosdb keys list -g $RG -n yycosmos --type connection-strings \
   --query "connectionStrings[?description=='Primary SQL Connection String'].connectionString | [0]" -o tsv)
 az containerapp job secret set -g $RG -n $JOB --secrets "cosmos-conn=$CONN"
 az containerapp job update -g $RG -n $JOB \
   --set-env-vars COSMOS_CONNECTION_STRING=secretref:cosmos-conn
 
-# 7. 手動跑一次驗證
+# 6. 手動跑一次驗證
 az containerapp job start -g $RG -n $JOB
 az containerapp job execution list -g $RG -n $JOB -o table
 ```
 
 ## 持續部署
 
-`.github/workflows/BotRateJob.yml` 會在 `BotRateJob/**` 有變動時自動建置並更新 job。
-需要在 repo 設定 `AZURE_CREDENTIALS` secret（服務主體 JSON），
-並確認 workflow 裡的 `ACR_NAME` / `JOB_NAME` / `RESOURCE_GROUP` 與實際資源相符。
+`.github/workflows/BotRateJob.yml` 會在 `BotRateJob/**` 有變動時建置映像、推上 Docker Hub，
+再更新 job 的映像標籤。需要三個 repo secret：
+
+| Secret | 用途 |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub 帳號，同時決定映像名稱 |
+| `DOCKERHUB_TOKEN` | Docker Hub 個人存取權杖（Read & Write） |
+| `AZURE_CREDENTIALS` | 服務主體 JSON，範圍限 Yanyue 資源群組 |
+
+設定 secret 時注意：`gh secret set` 需要互動式終端機，
+在沒有 TTY 的環境（例如工具內執行）會讀到 EOF 並把值設成空字串，
+secret 看起來有建立但實際是空的。用 GitHub 網頁或一般終端機設定。
+
+Docker Hub 上的 `botratejob` 儲存庫必須是 **Public**，否則 Container Apps 無法匿名拉取。
 
 ## 成本
 
-一天執行一次、每次約 1 分鐘，1 vCPU / 2GiB：
-每月約 1,800 vCPU-秒、3,600 GiB-秒，遠低於 Container Apps 每月免費額度
-（180,000 vCPU-秒、360,000 GiB-秒），運算費用實質為 0。
-額外成本只有 ACR Basic（約 US$5/月），若改用 Docker Hub 公開儲存庫可省下。
+**每月約 NT$0。**
+
+一天執行一次、每次約 120 秒（含拉映像與通過挑戰的 50 秒），1 vCPU / 2GiB：
+每月約 3,650 vCPU-秒、7,300 GiB-秒，約為 Container Apps 免費額度
+（180,000 vCPU-秒、360,000 GiB-秒）的 2%。
+
+映像放在 Docker Hub 公開儲存庫，沒有註冊表費用。
+Container Apps 環境會附帶一個 Log Analytics 工作區，每次執行只產生約十行日誌，
+遠低於每月 5 GB 的免費擷取量。
 
 ## 注意事項
 
