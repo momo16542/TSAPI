@@ -1,0 +1,43 @@
+name: 建置匯率抓取容器並更新 Container Apps Job
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'BotRateJob/**'
+      - '.github/workflows/BotRateJob.yml'
+  workflow_dispatch:
+
+env:
+  ACR_NAME: tsapiacr
+  IMAGE_NAME: botratejob
+  JOB_NAME: botrate-job
+  RESOURCE_GROUP: TSAPI
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure 登入
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 用 ACR 雲端建置，runner 不需要 Docker
+      - name: 建置並推送映像
+        run: |
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --image ${{ env.IMAGE_NAME }}:latest \
+            --file BotRateJob/Dockerfile \
+            BotRateJob
+
+      - name: 更新 Container Apps Job 映像
+        run: |
+          az containerapp job update \
+            --name ${{ env.JOB_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}

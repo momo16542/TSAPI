@@ -18,6 +18,12 @@
     <PackageReference Include="Microsoft.Azure.WebJobs.Extensions.CosmosDB" Version="4.6.0" />
   </ItemGroup>
   <ItemGroup>
+    <!-- BotRateJob 是獨立的 Container Apps Job 專案，不屬於 Function App -->
+    <Compile Remove="BotRateJob\**" />
+    <None Remove="BotRateJob\**" />
+    <EmbeddedResource Remove="BotRateJob\**" />
+  </ItemGroup>
+  <ItemGroup>
     <None Update="host.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
