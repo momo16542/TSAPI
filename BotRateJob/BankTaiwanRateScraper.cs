@@ -29,7 +29,10 @@ public sealed class BankTaiwanRateScraper
 
     public BankTaiwanRateScraper(ILogger logger) => _logger = logger;
 
-    public async Task<ScrapeResult> ScrapeAsync()
+    /// <summary>
+    /// 開瀏覽器、通過防爬蟲挑戰，然後把已通過挑戰的頁面交給 action 使用。
+    /// </summary>
+    private async Task<T> WithChallengedPageAsync<T>(Func<IPage, Task<T>> action)
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
@@ -58,6 +61,13 @@ public sealed class BankTaiwanRateScraper
         await page.WaitForSelectorAsync(RateRowSelector, new PageWaitForSelectorOptions { Timeout = ChallengeTimeoutMs });
         _logger.LogInformation("已通過防爬蟲挑戰");
 
+        return await action(page);
+    }
+
+    public Task<ScrapeResult> ScrapeAsync() => WithChallengedPageAsync(ScrapeLatestAsync);
+
+    private async Task<ScrapeResult> ScrapeLatestAsync(IPage page)
+    {
         var quoteTime = await ReadQuoteTimeAsync(page);
         _logger.LogInformation("牌價掛牌時間：{QuoteTime:yyyy/MM/dd HH:mm}", quoteTime);
 
@@ -87,6 +97,58 @@ public sealed class BankTaiwanRateScraper
         // 備援路徑：直接讀畫面上的表格
         var fromTable = await ParseTableAsync(page, quoteTime);
         return new ScrapeResult(quoteTime, fromTable, "HTML 表格");
+    }
+
+    /// <summary>
+    /// 回填指定日期區間。通過一次挑戰後沿用同一個 session 逐日抓取，
+    /// 沒有資料的日期（假日、台銀未保留的久遠日期）會跳過。
+    /// </summary>
+    public Task<List<BankTaiwanSpotRate>> ScrapeRangeAsync(DateTime from, DateTime to) =>
+        WithChallengedPageAsync(page => ScrapeRangeCoreAsync(page, from, to));
+
+    private async Task<List<BankTaiwanSpotRate>> ScrapeRangeCoreAsync(IPage page, DateTime from, DateTime to)
+    {
+        var all = new List<BankTaiwanSpotRate>();
+        var skipped = new List<DateTime>();
+
+        for (var date = from.Date; date <= to.Date; date = date.AddDays(1))
+        {
+            string csv;
+            try
+            {
+                csv = await FetchCsvAsync(page, $"/xrt/flcsv/0/{date:yyyy-MM-dd}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("{Date:yyyy/MM/dd} 取得失敗，跳過：{Message}", date, ex.Message);
+                skipped.Add(date);
+                continue;
+            }
+
+            var rates = ParseCsv(csv, date);
+            if (rates.Count == 0)
+            {
+                skipped.Add(date);
+                continue;
+            }
+
+            all.AddRange(rates);
+            _logger.LogInformation("{Date:yyyy/MM/dd} 取得 {Count} 筆", date, rates.Count);
+
+            // 逐日連續請求，稍作間隔避免觸發流量限制
+            await Task.Delay(1500);
+        }
+
+        _logger.LogInformation("回填完成：{Days} 天有資料、{Skipped} 天無資料，共 {Total} 筆",
+            all.Select(r => r.Date).Distinct().Count(), skipped.Count, all.Count);
+
+        if (skipped.Count > 0)
+        {
+            _logger.LogInformation("無資料的日期：{Dates}",
+                string.Join(", ", skipped.Select(d => d.ToString("MM/dd"))));
+        }
+
+        return all;
     }
 
     /// <summary>讀取「牌價最新掛牌時間：2026/07/25 09:25」。讀不到就退回台北時間現在。</summary>
@@ -123,7 +185,7 @@ public sealed class BankTaiwanRateScraper
         return DateTime.UtcNow.AddHours(8);
     }
 
-    private async Task<string> FetchCsvAsync(IPage page)
+    private async Task<string> FetchCsvAsync(IPage page, string? path = null)
     {
         var csv = await page.EvaluateAsync<string>(
             """
@@ -132,7 +194,7 @@ public sealed class BankTaiwanRateScraper
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 return await res.text();
             }
-            """, CsvPath);
+            """, path ?? CsvPath);
 
         if (string.IsNullOrWhiteSpace(csv) || !csv.TrimStart().StartsWith("幣別"))
         {

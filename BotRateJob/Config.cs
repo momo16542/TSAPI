@@ -32,6 +32,20 @@ internal static class Config
         }
     }
 
+    /// <summary>回填模式起始日（yyyy-MM-dd）。設定後改為抓取區間而非最新牌價。</summary>
+    public static DateTime? BackfillFrom => ParseDate("BACKFILL_FROM");
+
+    /// <summary>回填模式結束日（含）。未設定時預設為今天。</summary>
+    public static DateTime? BackfillTo => ParseDate("BACKFILL_TO");
+
+    private static DateTime? ParseDate(string name)
+    {
+        var v = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(v)) return null;
+        if (DateTime.TryParse(v, out var parsed)) return parsed.Date;
+        throw new InvalidOperationException($"{name} 格式無法解析：{v}（應為 yyyy-MM-dd）");
+    }
+
     /// <summary>本機測試用：只抓資料並印出，不寫 Cosmos、不發 Telegram。</summary>
     public static bool DryRun
     {

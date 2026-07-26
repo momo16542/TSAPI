@@ -36,6 +36,27 @@ job 重跑或重試會覆蓋當天同幣別的資料，不會像以前一樣長�
 | `TELEGRAM_THREAD_ID` | 否 | `2` | 與 Function 相同 |
 | `DRY_RUN` | 否 | — | `1` = 只抓取並印出，不寫 Cosmos、不發通知 |
 | `FORCE_TABLE_PARSE` | 否 | — | `1` = 跳過 CSV 直接用表格解析 |
+| `BACKFILL_FROM` | 否 | — | 設定後改為回填模式，格式 `yyyy-MM-dd` |
+| `BACKFILL_TO` | 否 | 今天 | 回填結束日（含） |
+
+## 回填模式
+
+斷線期間造成資料缺口時，用 `BACKFILL_FROM` / `BACKFILL_TO` 補齊。
+通過一次挑戰後沿用同一個 session 逐日抓 `/xrt/flcsv/0/{yyyy-MM-dd}`，
+每日間隔 1.5 秒避免觸發流量限制。
+
+```powershell
+$env:BACKFILL_FROM = "2026-06-29"
+$env:BACKFILL_TO   = "2026-07-24"
+$env:DRY_RUN = "1"          # 先預演確認抓得到
+dotnet run --project BotRateJob\BotRateJob.csproj
+```
+
+因為 id 是 `yyyyMMdd-幣別`，重複執行只會覆蓋、不會產生重複文件。
+
+**注意：指定日期的端點對非營業日回「查無資料」**，所以週末與國定假日會被跳過。
+但每日排程抓的是 `/xrt/flcsv/0/day`（最新牌價），週末照樣拿得到前一營業日的數值並以當天日期寫入，
+兩者行為不同。若回填後需要讓週末也有資料，得另外用前一營業日的數值補。
 
 ## 本機測試
 
