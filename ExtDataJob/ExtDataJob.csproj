@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    外部資料抓取 job（2026-09-01）。排程觸發 → 下載公會 xls／金屬行情 → 解析 → 寫中央 Azure SQL。
+    殼照 BotRateJob（環境變數設定、Telegram 失敗通知、非 0 結束碼讓 Container Apps Job 標記失敗）。
+
+    【跨 repo 引用】使用者裁決 A＋A2（2026-09-01）：
+      本機開發用相對路徑直接引用 ERPV2 的四個共用專案（零設定、改了立刻生效）；
+      容器則改成「先 dotnet publish 再 COPY 產出」，不在容器內從原始碼建置
+      ——因為 Docker build context 只有 TSAPI 這個資料夾，跨 repo 的原始碼不在裡面。
+      前提：兩個 repo 都放在 source\repos 底下。
+
+    【四個共用專案的分工】
+      Fetching     拿到檔案（找連結、下載、存原始檔、擷取歷程）
+      Parsing      看懂檔案（版面判讀，零相依）
+      Parsing.Npoi 讀檔實作（Apache-2.0，可在容器自由部署，不需 Telerik）
+      Central      寫進中央庫（SqlBulkCopy → staging → MERGE）
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ExtDataJob</RootNamespace>
+    <AssemblyName>ExtDataJob</AssemblyName>
+    <!-- 需要中文與 zh-TW 文化，不能開 InvariantGlobalization（同 BotRateJob） -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.13.1" />
+    <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.8.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 相對路徑跨 repo（使用者裁決 A）。兩個 repo 需並存於 source\repos 底下。 -->
+    <ProjectReference Include="..\..\..\ERPV2\TsErp.ExternalData.Fetching\TsErp.ExternalData.Fetching.csproj" />
+    <ProjectReference Include="..\..\..\ERPV2\TsErp.ExternalData.Parsing\TsErp.ExternalData.Parsing.csproj" />
+    <ProjectReference Include="..\..\..\ERPV2\TsErp.ExternalData.Parsing.Npoi\TsErp.ExternalData.Parsing.Npoi.csproj" />
+    <ProjectReference Include="..\..\..\ERPV2\TsErp.ExternalData.Central\TsErp.ExternalData.Central.csproj" />
+  </ItemGroup>
+
+</Project>
