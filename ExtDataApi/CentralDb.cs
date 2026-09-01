@@ -36,9 +36,16 @@ public static class CentralDb
     private static string GetToken()
     {
         var errors = new List<string>();
+
+        // 使用者指派的受控識別要靠 AZURE_CLIENT_ID 指定；參數空的只認系統指派。
+        var clientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        TokenCredential 受控 = string.IsNullOrWhiteSpace(clientId)
+            ? new ManagedIdentityCredential()
+            : new ManagedIdentityCredential(clientId);
+
         foreach (var (name, credential) in new (string, TokenCredential)[]
                  {
-                     ("受控識別", new ManagedIdentityCredential()),
+                     ("受控識別", 受控),
                      ("Azure CLI", new AzureCliCredential()),
                  })
         {

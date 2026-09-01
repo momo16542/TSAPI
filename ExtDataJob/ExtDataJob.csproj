@@ -25,7 +25,21 @@
     <AssemblyName>ExtDataJob</AssemblyName>
     <!-- 需要中文與 zh-TW 文化，不能開 InvariantGlobalization（同 BotRateJob） -->
     <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- SDK 內建容器發佈（.NET SDK 8+）：**不需要本機裝 Docker** 就能造映像並推上登錄。
+         用法： dotnet publish -c Release /t:PublishContainer
+         推送憑證讀 ~/.docker/config.json。Dockerfile 保留給有 Docker 的機器，
+         兩者產出等價（同 base image、同內容、同進入點）。 -->
+    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
+    <ContainerBaseImage>mcr.microsoft.com/dotnet/runtime:8.0</ContainerBaseImage>
+    <ContainerRegistry>docker.io</ContainerRegistry>
+    <ContainerRepository>momo16542/extdatajob</ContainerRepository>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 公會資料是中文欄名與中文月份表名，容器內不能走 invariant globalization -->
+    <ContainerEnvironmentVariable Include="DOTNET_SYSTEM_GLOBALIZATION_INVARIANT" Value="0" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.13.1" />

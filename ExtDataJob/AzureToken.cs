@@ -23,9 +23,17 @@ internal static class AzureToken
     {
         var errors = new List<string>();
 
+        // Container Apps 這邊用**使用者指派**的受控識別（沿用 botrate-job 的做法），
+        // 靠 AZURE_CLIENT_ID 指定是哪一個。參數空的 ManagedIdentityCredential() 只認系統指派，
+        // 在使用者指派的環境永遠取不到權杖——本機測不出來，部署上去才炸。
+        var clientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        TokenCredential 受控 = string.IsNullOrWhiteSpace(clientId)
+            ? new ManagedIdentityCredential()
+            : new ManagedIdentityCredential(clientId);
+
         foreach (var (name, credential) in new (string, TokenCredential)[]
                  {
-                     ("受控識別", new ManagedIdentityCredential()),
+                     ("受控識別", 受控),
                      ("Azure CLI", new AzureCliCredential()),
                  })
         {
