@@ -39,8 +39,12 @@ $identityName = 'extdata-job-identity'
 $identityClientId = 'a91612f0-df85-4335-8fee-2de1bc4b7d3c'
 $identityResourceId = "/subscriptions/0d48a058-d7c8-494e-9afd-0e29273131c5/resourcegroups/$ResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$identityName"
 
-# 映像標籤用 git sha，才知道線上跑的是哪一版（同 botrate-job 的慣例）
-$sha = (git rev-parse HEAD).Trim()
+# 映像標籤用 git sha，才知道線上跑的是哪一版（同 botrate-job 的慣例）。
+# **兩個 repo 都要帶**：映像內容同時取決於 TSAPI（job 本體）與 ERPV2（四個共用專案），
+# 只用 TSAPI 的 sha 的話，改了 ERPV2 而 TSAPI 沒動就會推出同名但內容不同的映像。
+$shaJob  = (git rev-parse --short=12 HEAD).Trim()
+$shaCore = (git -C "$PSScriptRoot\..\..\..\ERPV2" rev-parse --short=12 HEAD).Trim()
+$sha = "$shaJob-$shaCore"
 $image = "docker.io/$DockerHubUser/extdatajob:$sha"
 
 if (-not $SkipPush) {
@@ -65,6 +69,22 @@ if (-not $SkipPush) {
 }
 
 # ── Container Apps Job：不存在就建立，存在就更新 ──────────────────────────
+# PowerShell 5.1 的兩個地雷，都會讓 az 根本沒被呼叫或誤判失敗：
+#   1. 原生命令的 stderr 會包成 ErrorRecord，配上 ErrorActionPreference='Stop'
+#      就算 az 回 exit 0 也會中止（containerapp 擴充每次都印一行 WARNING）。
+#   2. 參數若逐個傳給函式，`-o` 會被當成 -OutVariable/-OutBuffer 的縮寫而報 ambiguous。
+# 所以：自己看 $LASTEXITCODE，且參數整包當**陣列**傳，PowerShell 不去解析裡面的內容。
+$ErrorActionPreference = 'Continue'
+function Invoke-Az([string[]]$AzArgs) {
+    $out = & az @AzArgs 2>&1
+    $clean = $out | Where-Object { "$_" -notmatch '^WARNING' }
+    if ($LASTEXITCODE -ne 0) {
+        $clean | ForEach-Object { Write-Host $_ }
+        throw "az $($AzArgs -join ' ') 失敗（exit $LASTEXITCODE）"
+    }
+    $clean
+}
+
 $envVars = @(
     "CENTRAL_SQL_SERVER=yyerp.database.windows.net"
     "CENTRAL_SQL_DATABASE=YanyueCentral"
@@ -76,35 +96,40 @@ $envVars = @(
     "TELEGRAM_CHAT_ID=-1003784964525"
 )
 
-$exists = az containerapp job show -g $ResourceGroup -n $JobName -o none 2>$null; $found = ($LASTEXITCODE -eq 0)
+& az containerapp job show -g $ResourceGroup -n $JobName -o none 2>&1 | Out-Null
+$found = ($LASTEXITCODE -eq 0)
 
 if (-not $found) {
     Write-Host "建立 job $JobName（cron $Cron，UTC）..." -ForegroundColor Cyan
-    az containerapp job create `
-        -g $ResourceGroup -n $JobName --environment $Environment `
-        --trigger-type Schedule --cron-expression $Cron `
-        --replica-timeout 1800 --replica-retry-limit 1 `
-        --parallelism 1 --replica-completion-count 1 `
-        --image $image --cpu 0.5 --memory 1Gi `
-        --mi-user-assigned $identityResourceId `
-        --env-vars $envVars -o none
+    Invoke-Az (@(
+        'containerapp', 'job', 'create',
+        '-g', $ResourceGroup, '-n', $JobName, '--environment', $Environment,
+        '--trigger-type', 'Schedule', '--cron-expression', $Cron,
+        '--replica-timeout', '1800', '--replica-retry-limit', '1',
+        '--parallelism', '1', '--replica-completion-count', '1',
+        '--image', $image, '--cpu', '0.5', '--memory', '1Gi',
+        '--mi-user-assigned', $identityResourceId,
+        '--env-vars') + $envVars + @('-o', 'none'))
 }
 else {
     Write-Host "更新 job $JobName ..." -ForegroundColor Cyan
-    az containerapp job update `
-        -g $ResourceGroup -n $JobName `
-        --image $image --cron-expression $Cron `
-        --replica-timeout 1800 `
-        --set-env-vars $envVars -o none
+    Invoke-Az (@(
+        'containerapp', 'job', 'update',
+        '-g', $ResourceGroup, '-n', $JobName,
+        '--image', $image, '--cron-expression', $Cron,
+        '--replica-timeout', '1800',
+        '--set-env-vars') + $envVars + @('-o', 'none'))
 }
 
 Write-Host "`n目前設定：" -ForegroundColor Green
-az containerapp job show -g $ResourceGroup -n $JobName `
-    --query "{名稱:name, 排程:properties.configuration.scheduleTriggerConfig.cronExpression, 逾時秒:properties.configuration.replicaTimeout, 映像:properties.template.containers[0].image}" -o yaml
+Invoke-Az @(
+    'containerapp', 'job', 'show', '-g', $ResourceGroup, '-n', $JobName,
+    '--query', '{name:name, cron:properties.configuration.scheduleTriggerConfig.cronExpression, timeout:properties.configuration.replicaTimeout, image:properties.template.containers[0].image}',
+    '-o', 'yaml')
 
 if ($RunNow) {
     Write-Host "`n手動觸發一次..." -ForegroundColor Cyan
-    az containerapp job start -g $ResourceGroup -n $JobName -o none
+    Invoke-Az @('containerapp', 'job', 'start', '-g', $ResourceGroup, '-n', $JobName, '-o', 'none')
     Write-Host "已送出。看執行狀況：" -ForegroundColor Green
     Write-Host "  az containerapp job execution list -g $ResourceGroup -n $JobName -o table"
 }
