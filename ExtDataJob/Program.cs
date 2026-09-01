@@ -85,13 +85,15 @@ try
             logger.LogInformation("  {Key}：讀入 {Count} 列", result.SourceKey, rows.Count);
             if (writer is null) { summary.Add($"行情 {rows.Count} 列（DRY_RUN）"); continue; }
 
+            // 品項主檔的權威來源是程式端的 MetalItemCatalog。**必須先於行情同步**：
+            // 行情的「品號」是 merge proc 用「交易所＋名稱」對品項主檔帶出來的，
+            // 反過來排的話，全新的庫第一次跑時主檔還是空的，整批品號會寫成 NULL。
+            var itemMerged = writer.UpsertMetalItem(MetalPriceTable.BuildItems());
+            logger.LogInformation("  品項主檔：{Merged}", itemMerged);
+
             var merged = writer.UpsertMetalPrice(MetalPriceTable.Build(rows, result.FetchedAt));
             logger.LogInformation("  {Key}：{Merged}", result.SourceKey, merged);
             summary.Add($"行情 新增 {merged.新增}／更新 {merged.更新}");
-
-            // 品項主檔的權威來源是程式端的 MetalItemCatalog，跟著行情一起同步
-            var itemMerged = writer.UpsertMetalItem(MetalPriceTable.BuildItems());
-            logger.LogInformation("  品項主檔：{Merged}", itemMerged);
         }
         else
         {
