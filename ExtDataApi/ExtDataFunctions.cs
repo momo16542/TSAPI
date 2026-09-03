@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Data.SqlClient;
@@ -52,21 +51,9 @@ public class ExtDataFunctions
         var q = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
         var 參數 = req.Url.Query;
 
-        req.Headers.TryGetValues(ApiAuth.HeaderName, out var keys);
-        var caller = await ApiAuth.VerifyAsync(keys?.FirstOrDefault(), CancellationToken.None);
-
-        if (caller is null)
-        {
-            await UsageLog.WriteAsync(_logger, null, dataset, 參數, null, sw.ElapsedMilliseconds, 401, "金鑰無效");
-            // 不細分「金鑰不存在／已撤銷／客戶停用」——避免用回應內容幫人試金鑰
-            return await Json(req, HttpStatusCode.Unauthorized, new { error = "金鑰無效或已停用" });
-        }
-        if (!caller.CanRead(dataset))
-        {
-            await UsageLog.WriteAsync(_logger, caller.ClientId, dataset, 參數, null, sw.ElapsedMilliseconds, 403, "未開通此資料集");
-            return await Json(req, HttpStatusCode.Forbidden,
-                new { error = $"未開通資料集 {dataset}", 已開通 = caller.Datasets });
-        }
+        // 驗金鑰／資料集授權／不通過時的用量與回應，與 geocode 端點共用同一段（ApiPipeline）
+        var (caller, 拒絕) = await ApiPipeline.驗證Async(_logger, req, dataset, 參數, sw);
+        if (拒絕 is not null) return 拒絕;
 
         int limit = Math.Clamp(ParseInt(q["limit"]) ?? ExtDataQueries.DefaultLimit, 1, ExtDataQueries.MaxLimit);
         long cursor = ParseLong(q["cursor"]) ?? 0;
@@ -76,8 +63,8 @@ public class ExtDataFunctions
             await using var cn = await CentralDb.OpenAsync();
             var page = await query(cn, q, limit, cursor);
 
-            await UsageLog.WriteAsync(_logger, caller.ClientId, dataset, 參數, page.Count, sw.ElapsedMilliseconds, 200);
-            return await Json(req, HttpStatusCode.OK, new
+            await UsageLog.WriteAsync(_logger, caller!.ClientId, dataset, 參數, page.Count, sw.ElapsedMilliseconds, 200);
+            return await ApiPipeline.Json(req, HttpStatusCode.OK, new
             {
                 data = page.Data,
                 nextCursor = page.NextCursor,
@@ -88,23 +75,11 @@ public class ExtDataFunctions
         catch (Exception ex)
         {
             _logger.LogError(ex, "{Dataset} 查詢失敗", dataset);
-            await UsageLog.WriteAsync(_logger, caller.ClientId, dataset, 參數, null, sw.ElapsedMilliseconds, 500,
+            await UsageLog.WriteAsync(_logger, caller!.ClientId, dataset, 參數, null, sw.ElapsedMilliseconds, 500,
                 ex.GetType().Name + " " + ex.Message);
             // 例外內容不回給呼叫端（可能含連線字串或結構資訊）
-            return await Json(req, HttpStatusCode.InternalServerError, new { error = "查詢失敗，請聯絡提供方" });
+            return await ApiPipeline.Json(req, HttpStatusCode.InternalServerError, new { error = "查詢失敗，請聯絡提供方" });
         }
-    }
-
-    private static async Task<HttpResponseData> Json(HttpRequestData req, HttpStatusCode code, object body)
-    {
-        var res = req.CreateResponse(code);
-        res.Headers.Add("Content-Type", "application/json; charset=utf-8");
-        await res.WriteStringAsync(JsonSerializer.Serialize(body, new JsonSerializerOptions
-        {
-            // 中文不要被轉成 \uXXXX，方便人直接讀回應
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        }));
-        return res;
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
