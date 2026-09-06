@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    TGOS 轉發器（2026-09-06）：跑在 GCP asia-east1 的 e2-micro（台灣固定 IP 34.80.181.162）。
+    唯一職責：拿地址打內政部 TGOS QueryAddr，把結果回給 YYAPI。
+    為什麼要有它：TGOS 使用規定第七條第 2 款只接受中華民國 IP，而 YYAPI 在 Azure East Asia（香港）。
+    部署：infra/deploy-relay.ps1（self-contained 單檔 → scp → systemd 重啟）。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>TgosRelay</RootNamespace>
+    <AssemblyName>tgos-relay</AssemblyName>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>

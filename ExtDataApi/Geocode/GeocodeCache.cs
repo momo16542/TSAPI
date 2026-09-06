@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 
 namespace TS.API.ExtData.Geocode;
 
@@ -31,6 +31,27 @@ public static class GeocodeCache
     /// 不同就視同未命中（理由見該方法的 目前來源 參數）。
     /// </summary>
     public const int 查無保留天數 = 7;
+
+    /// <summary>TGOS 結果的保留時數 app setting；不設＝24。0＝不快取（不寫也不讀）。</summary>
+    public const string 設定鍵_Tgos保留時數 = "TGOS_CACHE_HOURS";
+
+    /// <summary>
+    /// 「找到」列依來源的保留時間。null＝不到期（Nominatim 等免費來源，座標不會變）。
+    ///
+    /// **TGOS 例外（2026-09-06 使用者裁決，依 TGOS 使用規定第七條第 3／8 款）**：內政部資料不得重製轉供第三人，
+    /// 中央快取跨客戶共用，長期保存 TGOS 座標就成了在散布內政部的資料集。所以 TGOS 列只做**短時間去重**
+    /// （預設 24 小時），過期視同未命中、重打上游覆蓋。要更保守設 0＝完全不進中央庫。
+    /// </summary>
+    public static TimeSpan? 找到保留時數(string? 來源)
+    {
+        if (!string.Equals(來源?.Trim(), "TGOS", StringComparison.OrdinalIgnoreCase)) return null;
+        var raw = Environment.GetEnvironmentVariable(設定鍵_Tgos保留時數);
+        var hours = int.TryParse(raw, out var h) && h >= 0 ? h : 24;
+        return TimeSpan.FromHours(hours);
+    }
+
+    /// <summary>這個來源的結果可不可以寫進中央快取（TGOS 保留時數 0＝不寫）。</summary>
+    public static bool 可寫快取(string? 來源) => 找到保留時數(來源) is not { Ticks: 0 };
 
     /// <summary>
     /// 查快取。回 null＝未命中，三種情況：沒這筆／過期的「查無」／**這筆是別的後端寫的**。
@@ -77,6 +98,9 @@ public static class GeocodeCache
 
         // 過期的「查無」＝視同未命中，讓呼叫端再問一次上游
         if (!row.找到 && row.建立時間 < DateTime.UtcNow.AddDays(-查無保留天數)) return null;
+
+        // 「找到」但來源有保留上限（TGOS 短效去重）且已過期＝視同未命中
+        if (row.找到 && 找到保留時數(row.Source) is { } 上限 && row.建立時間 < DateTime.UtcNow - 上限) return null;
 
         // 別的後端寫的＝視同未命中（換 TGOS 之後 Nominatim 的舊列要被重查覆蓋，不是永遠命中）。
         // 命中次數也不累計——這一筆對目前的後端來說根本沒發揮作用。

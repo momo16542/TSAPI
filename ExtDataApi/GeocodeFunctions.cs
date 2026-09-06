@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -74,6 +74,7 @@ public class GeocodeFunctions
             var backend = GeocodeBackendFactory.預設後端;
 
             var 快取 = await GeocodeCache.TryGetAsync(cn, 鍵, backend.來源, ct);
+            // TGOS 結果的保留時數設 0＝完全不快取（GeocodeCache.找到保留時數），這時連寫都不寫
             if (快取 is not null)
             {
                 await UsageLog.WriteAsync(_logger, caller!.ClientId, Dataset, 參數,
@@ -86,7 +87,8 @@ public class GeocodeFunctions
 
             // 查無也寫快取（找到=0）——否則一個查不到的地址每次都會打上游，
             // 而上游的 1 req/s 是所有客戶共用的。過期規則見 GeocodeCache.查無保留天數。
-            await 寫快取(cn, 鍵, 地址, hit, backend.來源, ct);
+            if (GeocodeCache.可寫快取(backend.來源))
+                await 寫快取(cn, 鍵, 地址, hit, backend.來源, ct);
 
             await UsageLog.WriteAsync(_logger, caller!.ClientId, Dataset, 參數,
                 hit is null ? 0 : 1, sw.ElapsedMilliseconds, 200, "backend:" + backend.來源);
@@ -102,9 +104,9 @@ public class GeocodeFunctions
             return await ApiPipeline.Json(req, HttpStatusCode.BadGateway,
                 new { error = "定位服務暫時無法使用" });
         }
-        catch (NotSupportedException ex)
+        catch (Exception ex) when (ex is NotSupportedException or GeocodeConfigurationException)
         {
-            // GEOCODE_BACKEND 設定錯誤（未知的值，或指定了還沒實作的 TGOS）。
+            // GEOCODE_BACKEND 設定錯誤（未知的值），或 TGOS 後端的設定缺漏／轉發器回 401／503（GeocodeConfigurationException）。
             // 這是**設定問題，不會自己好**，而 ERP 端把 5xx 一律當「暫時性、稍後再試」
             // （CentralGeocodeProvider.轉譯例外），所以回應本文一定要指名是哪個設定錯了，
             // 否則維運者只能去 App Insights 撈 log 才知道要改什麼（審查 S4）。

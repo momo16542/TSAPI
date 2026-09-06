@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
@@ -28,6 +28,13 @@
     <Compile Remove="ExtDataJob\**" />
     <None Remove="ExtDataJob\**" />
     <EmbeddedResource Remove="ExtDataJob\**" />
+    <!-- TgosRelay 是跑在 GCP VM 的獨立 ASP.NET 轉發器（2026-09-06），有自己的 Program.cs -->
+    <Compile Remove="TgosRelay\**" />
+    <None Remove="TgosRelay\**" />
+    <EmbeddedResource Remove="TgosRelay\**" />
+    <Compile Remove="TgosRelay.Tests\**" />
+    <None Remove="TgosRelay.Tests\**" />
+    <EmbeddedResource Remove="TgosRelay.Tests\**" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">

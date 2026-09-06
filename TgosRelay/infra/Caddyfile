@@ -1,0 +1,9 @@
+# /etc/caddy/Caddyfile — 對外 443 自動簽 Let's Encrypt 憑證，反代給本機 5000 的轉發器。
+# 主機名要先在 yanyue.io DNS 開 A 記錄指到 34.80.181.162（Cloudflare 請 DNS only），80 埠要通（HTTP-01 驗證）。
+tgos-relay.yanyue.io {
+	reverse_proxy 127.0.0.1:5000
+	encode gzip
+	log {
+		output file /var/log/caddy/access.log
+	}
+}

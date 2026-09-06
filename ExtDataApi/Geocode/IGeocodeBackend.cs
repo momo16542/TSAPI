@@ -1,4 +1,4 @@
-namespace TS.API.ExtData.Geocode;
+﻿namespace TS.API.ExtData.Geocode;
 
 /// <summary>
 /// 一次定位的結果。查無資料由 <see cref="IGeocodeBackend.GeocodeAsync"/> 回 null 表示，
@@ -64,10 +64,9 @@ public static class GeocodeBackendFactory
         return n switch
         {
             "NOMINATIM" => new NominatimBackend(),
-            // TGOS 要等 TGOS 核准 ＋ NAT Gateway 固定出站 IP 才接得起來（計畫 §8.5）。
-            // 這裡刻意丟例外而不是默默退回 Nominatim：設定寫了 TGOS 卻跑 Nominatim
-            // 會讓人以為門牌精度已經生效，比開不起來難查太多。
-            "TGOS" => throw new NotSupportedException("TGOS 後端尚未實作"),
+            // TGOS 經 GCP 台灣 IP 的轉發器（2026-09-06）；缺 TGOS_RELAY_URL/KEY 時建構子丟 GeocodeConfigurationException，
+            // 刻意不默默退回 Nominatim：設定寫了 TGOS 卻跑 Nominatim 會讓人以為門牌精度已經生效。
+            "TGOS" => new TgosRelayBackend(),
             _ => throw new NotSupportedException($"未知的 {設定鍵}：{名稱}"),
         };
     }
