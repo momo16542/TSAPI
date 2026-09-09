@@ -20,7 +20,7 @@ public sealed class TgosClient(HttpClient http, RelayConfig cfg)
         {
             ["oAPPId"] = cfg.TgosAppId,
             ["oAPIKey"] = cfg.TgosApiKey,
-            ["oAddress"] = 地址,
+            ["oAddress"] = 去郵遞區號(地址),
             ["oSRS"] = "EPSG:4326",
             ["oFuzzyType"] = "2",
             ["oResultDataType"] = "JSON",
@@ -114,4 +114,26 @@ public sealed class TgosClient(HttpClient http, RelayConfig cfg)
     }
 
     private static string 截短(string s) => s.Length <= 200 ? s : s.Substring(0, 200) + "…";
+
+    /// <summary>
+    /// 去掉地址開頭的郵遞區號（3／5／6 碼）。
+    ///
+    /// **為什麼一定要做**（2026-09-09 用禾久真實客戶地址實測）：TGOS 的 QueryAddr **不吃**開頭的郵遞區號，
+    /// 帶著就查無，拿掉同一個地址立刻命中門牌：
+    ///   「231新北市新店區中興路3段3號9樓」→ 查無；「新北市新店區中興路3段3號9樓」→ 門牌命中。
+    /// 禾久快取裡 5 筆有 3 筆是這種寫法（ERP 主檔地址帶郵遞區號很常見），不處理的話切成 TGOS 之後
+    /// 這些客戶會直接從行程規劃的地圖上消失——**比原本的路名精度更糟**。
+    /// （樓層不必處理：「…3號9樓」TGOS 自己會忽略，實測命中。）
+    ///
+    /// 只砍**開頭**且後面接非數字的那一段：地址中間的數字（巷弄號）不能碰。
+    /// </summary>
+    public static string 去郵遞區號(string 地址)
+    {
+        var s = (地址 ?? string.Empty).TrimStart();
+        var i = 0;
+        while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
+        // 台灣郵遞區號是 3／5／6 碼；長度不對就不是郵遞區號（可能是門牌開頭的怪寫法），原樣送出
+        if (i is 3 or 5 or 6 && i < s.Length) return s.Substring(i).TrimStart();
+        return 地址 ?? string.Empty;
+    }
 }
