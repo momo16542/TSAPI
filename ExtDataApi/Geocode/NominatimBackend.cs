@@ -13,9 +13,9 @@ namespace TS.API.ExtData.Geocode;
 /// 邏輯抄自 ERPV2 <c>TsErp.Geo/Geocoding/NominatimGeocodeProvider.cs</c>（含降級查詢），
 /// **刻意複製而不是引用**：TSAPI 不參考 ERPV2 組件，兩邊各自部署、版本不必連動。
 ///
-/// ⚠️ 節流的界線：閘門是本行程內的 static，Functions **多實例時各算各的**，
-///    整體仍可能超過 1 req/s。現階段流量極小（拜訪行程規劃，一天數十筆且大多命中快取），
-///    可接受；換 TGOS 之後這個限制自然消失。
+/// ⚠️ 節流的界線：閘門（<see cref="NominatimThrottle"/>）是本行程內的 static，
+///    Functions **多實例時各算各的**，整體仍可能超過 1 req/s。現階段流量極小
+///    （拜訪行程規劃與 TAG 匯入，一天數十筆且大多命中快取），可接受；換 TGOS 之後這個限制自然消失。
 /// </summary>
 public sealed class NominatimBackend : IGeocodeBackend
 {
@@ -48,11 +48,8 @@ public sealed class NominatimBackend : IGeocodeBackend
     /// </summary>
     private static readonly HttpClient _http = new();
 
-    // 1 req/s 節流：閘門與「上次送出時間」都是 static，同一行程內所有呼叫共用一條隊伍。
-    private static readonly SemaphoreSlim _閘 = new(1, 1);
-    private static DateTime _上次送出 = DateTime.MinValue;
-
-    private static readonly TimeSpan 最小間隔 = TimeSpan.FromSeconds(1);
+    // 1 req/s 節流已抽到 NominatimThrottle（2026-09-09），與反查 /reverse 共用同一條隊伍——
+    // 政策的 1 req/s 是對整個 nominatim.openstreetmap.org 的加總上限，不是每個端點各一份。
     private static readonly TimeSpan 逾時 = TimeSpan.FromSeconds(10);
 
     private readonly string _base;
@@ -100,7 +97,7 @@ public sealed class NominatimBackend : IGeocodeBackend
         var url = _base + "/search?q=" + Uri.EscapeDataString(地址)
                 + "&format=jsonv2&countrycodes=tw&limit=1";
 
-        await 等到可以送出(ct).ConfigureAwait(false);
+        await NominatimThrottle.等到可以送出(ct).ConfigureAwait(false);
 
         using var 逾時來源 = CancellationTokenSource.CreateLinkedTokenSource(ct);
         逾時來源.CancelAfter(逾時);
@@ -164,24 +161,6 @@ public sealed class NominatimBackend : IGeocodeBackend
             return new GeocodeHit(lon, lat, 來源, GeoPrecision.判定(物件層級, 允許門牌));
         }
         return null;
-    }
-
-    private static async Task 等到可以送出(CancellationToken ct)
-    {
-        await _閘.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            var 距上次 = DateTime.UtcNow - _上次送出;
-            if (距上次 < 最小間隔)
-            {
-                await Task.Delay(最小間隔 - 距上次, ct).ConfigureAwait(false);
-            }
-            _上次送出 = DateTime.UtcNow;
-        }
-        finally
-        {
-            _閘.Release();
-        }
     }
 
     private static bool 取數字(JsonElement e, string 名, out double 值)
