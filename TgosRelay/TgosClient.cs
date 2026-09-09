@@ -26,6 +26,11 @@ public sealed class TgosClient(HttpClient http, RelayConfig cfg)
             ["oResultDataType"] = "JSON",
             ["oFuzzyBuffer"] = "0",
             ["oIsOnlyFullMatch"] = "false",
+            // v40 新增、**必送**的兩個參數：不送 TGOS 直接回 HTTP 500「缺少參數: oIsSupportPast」
+            // （2026-09-09 拿到金鑰後第一筆正查就中——v30 沒有這兩個，升 v40 時漏補；
+            //  這種錯只有真金鑰打得出來，罐頭測試看不到）。
+            ["oIsSupportPast"] = "false",   // 不查舊門牌：要的是現行門牌，舊門牌會帶回已裁撤的地址
+            ["oIsShowCodeBase"] = "false",  // 不要統計區資訊，維持最小回應
             ["oIsLockCounty"] = "false",
             ["oIsLockTown"] = "false",
             ["oIsLockVillage"] = "false",
