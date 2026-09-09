@@ -6,11 +6,12 @@ namespace TgosRelay;
 /// <summary>
 /// 一筆反查命中。<c>Raw</c> 是命中物件的原樣 JSON，給拿到真金鑰後定欄位對映用（YYAPI 不必理它）。
 /// </summary>
-/// <param name="Address">反查到的地址（顯示用字串）。</param>
+/// <param name="Address">反查到的地址（顯示用字串）。<c>includeVillage=false</c>（預設）時已去掉里／鄰。</param>
 /// <param name="Lon">命中物件上的經度（TGOS 回的門牌點，不是輸入的座標）。回應沒有座標欄時為 null。</param>
 /// <param name="Lat">同上的緯度。</param>
 /// <param name="MatchType">像 match／score 的欄位，給精度判定當線索；沒有就 null。</param>
-public sealed record TgosReverseHit(string Address, double? Lon, double? Lat, string? MatchType, JsonElement Raw);
+/// <param name="Dis"><c>DIS</c> 欄：距查詢點的公尺數。回應沒有這欄時為 null（呼叫端不能因此當成故障，見 <see cref="RelayConfig.GeoMaxDistanceM"/>）。</param>
+public sealed record TgosReverseHit(string Address, double? Lon, double? Lat, string? MatchType, double? Dis, JsonElement Raw);
 
 /// <summary>
 /// 解析「坐標回傳門牌服務」（<c>GeoQueryAddr.asmx/PointQueryNearAddr</c>）的回應。
@@ -27,7 +28,14 @@ public sealed record TgosReverseHit(string Address, double? Lon, double? Lat, st
 /// </summary>
 public static class TgosReverseParser
 {
-    public static TgosReverseHit? Parse(string? 回應, bool xySwap = false)
+    /// <param name="回應">TGOS 反查的原始回應（ASMX 外殼或裸 JSON）。</param>
+    /// <param name="xySwap">X/Y 對調旗標，見 <see cref="RelayConfig.GeoXySwap"/>。</param>
+    /// <param name="includeVillage">
+    /// false（預設；對齊 <see cref="RelayConfig.GeoIncludeVillage"/> 的預設值）＝從命中物件的
+    /// <c>FULL_ADDR</c>（或其他被判為地址欄的欄位）移除 <c>VILLAGE</c>／<c>NEIGHBORHOOD</c> 原樣字串。
+    /// true＝地址原樣回傳。
+    /// </param>
+    public static TgosReverseHit? Parse(string? 回應, bool xySwap = false, bool includeVillage = false)
     {
         var json = TgosResponseParser.剝XML外殼(回應);
         if (string.IsNullOrWhiteSpace(json)) return null;
@@ -55,8 +63,10 @@ public static class TgosReverseParser
                 lon = xySwap ? y : x;
                 lat = xySwap ? x : y;
             }
+            double? dis = 取數字(e, "DIS", out var d) ? d : null;
+            if (!includeVillage) 地址 = 去除里鄰(地址, e);
 
-            return new TgosReverseHit(地址, lon, lat, 找精度線索(e), e.Clone());
+            return new TgosReverseHit(地址, lon, lat, 找精度線索(e), dis, e.Clone());
         }
     }
 
@@ -98,6 +108,30 @@ public static class TgosReverseParser
     private static bool 像地址欄名(string 名)
         => 名.Contains("ADDR", StringComparison.OrdinalIgnoreCase)
         || 名.Contains("FULL", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 從地址字串移除 <c>VILLAGE</c>（里）與 <c>NEIGHBORHOOD</c>（鄰）兩段原樣字串，不自己重組地址。
+    ///
+    /// 為什麼不重組：<c>SECTION</c> 回的是 <c>"5"</c>，但 <c>FULL_ADDR</c> 裡是「五段」——
+    /// 自己組要做數字轉中文、還要處理巷/弄/衖的先後順序，出錯機會遠大於效益；
+    /// <c>FULL_ADDR</c> 是 TGOS 自己組好的權威字串，直接在它身上做字串移除最安全。
+    ///
+    /// 例：<c>臺北市信義區三張里34鄰信義路五段100號</c>（VILLAGE=三張里 NEIGHBORHOOD=34鄰）
+    /// → <c>臺北市信義區信義路五段100號</c>。
+    /// </summary>
+    private static string 去除里鄰(string 地址, JsonElement e)
+    {
+        var 里 = 取字串(e, "VILLAGE");
+        var 鄰 = 取字串(e, "NEIGHBORHOOD");
+        var 有移除 = false;
+        var 結果 = 地址;
+        if (!string.IsNullOrWhiteSpace(里)) { 結果 = 結果.Replace(里!.Trim(), ""); 有移除 = true; }
+        if (!string.IsNullOrWhiteSpace(鄰)) { 結果 = 結果.Replace(鄰!.Trim(), ""); 有移除 = true; }
+        // 移除後理論上不會留下空白（中文地址本來就沒有空格），保守處理避免有例外情況殘留連續空白
+        if (有移除)
+            結果 = string.Join(' ', 結果.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return 結果;
+    }
 
     /// <summary>
     /// 精度線索：先找慣用欄名，再退成「欄名含 MATCH／SCORE 的第一個純量欄」。

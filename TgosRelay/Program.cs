@@ -34,9 +34,10 @@ builder.Services.AddHttpClient<TgosClient>(c =>
 var app = builder.Build();
 var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "?";
 var log = app.Logger;
-log.LogInformation("tgos-relay {Version} 啟動；RELAY_KEY={RelayKey} TGOS 金鑰={Tgos} GEO 金鑰={Geo} XY_SWAP={Swap}/{GeoSwap} 間隔={Ms}ms",
+log.LogInformation("tgos-relay {Version} 啟動；RELAY_KEY={RelayKey} TGOS 金鑰={Tgos} GEO 金鑰={Geo} XY_SWAP={Swap}/{GeoSwap} 間隔={Ms}ms 里鄰={Village} 距離門檻={MaxDist}m",
     version, cfg.RelayKey已設 ? "已設" : "未設", cfg.Tgos金鑰已設 ? "已設" : "未設", cfg.Geo金鑰已設 ? "已設" : "未設",
-    cfg.XySwap, cfg.GeoXySwap, cfg.MinIntervalMs);
+    cfg.XySwap, cfg.GeoXySwap, cfg.MinIntervalMs, cfg.GeoIncludeVillage ? "含" : "不含",
+    cfg.GeoMaxDistanceM > 0 ? cfg.GeoMaxDistanceM.ToString() : "不限制");
 
 // geoConfigured 與 tgosConfigured 分開報：兩支服務各自申請、可能一支核准了另一支還沒
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version, tgosConfigured = cfg.Tgos金鑰已設, geoConfigured = cfg.Geo金鑰已設 }));
@@ -105,12 +106,26 @@ app.MapGet("/reverse", async (HttpContext ctx, string? lat, string? lon, TgosCli
     try
     {
         var hit = await throttle.RunAsync(c => tgos.ReverseAsync(緯度, 經度, c), ct);
+
+        // DIS 缺欄不擋（上游少給一個欄位不該讓整批查不到），但記一筆給維運看
+        if (hit != null && !hit.Dis.HasValue)
+            log.LogInformation("reverse dis缺欄 {Ms}ms", sw.ElapsedMilliseconds);
+
+        // 太遠視同查無（不是故障）：TGOS 反查回的是「最近門牌」、沒有距離上限，
+        // 工地空曠時可能回幾公里外的門牌卻照樣標成門牌精度（2026-09-09 使用者裁決，預設 200m）
+        if (hit != null && TgosReverseGate.太遠(hit.Dis, cfg.GeoMaxDistanceM))
+        {
+            // 只記距離與門檻，不記座標與地址（使用規定第七條第 8 款；同下方理由）
+            log.LogInformation("reverse tooFar dist={Dist}m 門檻={Threshold}m {Ms}ms", hit.Dis!.Value, cfg.GeoMaxDistanceM, sw.ElapsedMilliseconds);
+            return Results.Ok(new { found = false, tooFar = true, distanceM = hit.Dis!.Value });
+        }
+
         // 與 /geocode 同一條理由（使用規定第七條第 8 款）：座標與地址都不進 log，只記結果與耗時。
         // 反查的座標本身就是個人／工地位置，比地址更敏感。
         log.LogInformation("reverse found={Found} {Ms}ms", hit != null, sw.ElapsedMilliseconds);
         return hit == null
             ? Results.Ok(new { found = false })
-            : Results.Ok(new { found = true, address = hit.Address, lon = hit.Lon, lat = hit.Lat, matchType = hit.MatchType, raw = hit.Raw });
+            : Results.Ok(new { found = true, address = hit.Address, lon = hit.Lon, lat = hit.Lat, matchType = hit.MatchType, distanceM = hit.Dis, raw = hit.Raw });
     }
     catch (TgosUpstreamException ex)
     {

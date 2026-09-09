@@ -50,6 +50,25 @@ public sealed class RelayConfig
     public int MinIntervalMs { get; init; } = 1000;
 
     /// <summary>
+    /// 反查地址是否含里／鄰（<c>TGOS_GEO_INCLUDE_VILLAGE</c>）。
+    /// 預設 false＝2026-09-09 使用者裁決：回傳地址預設不含「里／鄰」——
+    /// <see cref="TgosReverseParser"/> 從 <c>FULL_ADDR</c> 移除 <c>VILLAGE</c>／<c>NEIGHBORHOOD</c> 兩段原樣字串，
+    /// 不自己用其他欄位（<c>ROAD</c>／<c>SECTION</c>…）重組地址（理由見 <c>TgosReverseParser.去除里鄰</c>）。
+    /// 之後要含里鄰只需把這個環境變數改 true，不必改程式碼。
+    /// </summary>
+    public bool GeoIncludeVillage { get; init; }
+
+    /// <summary>
+    /// 反查結果的最大距離門檻，公尺（<c>TGOS_GEO_MAX_DIST_M</c>）。
+    /// TGOS 反查（<c>PointQueryNearAddr</c>）回的是「離查詢點最近的門牌」、沒有距離上限——
+    /// 工地空曠時可能回幾公里外的門牌，卻照樣標成門牌精度。
+    /// 2026-09-09 使用者裁決預設 200 公尺；超過視同查無（<c>/reverse</c> 回
+    /// <c>{found:false, tooFar:true, distanceM}</c>，HTTP 200，這是查無不是故障）。
+    /// 設 0＝不限制。
+    /// </summary>
+    public int GeoMaxDistanceM { get; init; } = 200;
+
+    /// <summary>
     /// 正查（地址→坐標）端點。官方現行版本是 <c>v40</c>；
     /// <c>v30</c> 與舊網域 <c>addr.tgos.nat.gov.tw</c> 都是舊值。
     /// v40 的 QueryAddr 多了 <c>oIsSupportHistory</c>／<c>oIsShowCodeBase</c> 兩個**選用**參數，
@@ -85,6 +104,8 @@ public sealed class RelayConfig
             XySwap = string.Equals(E("TGOS_XY_SWAP"), "true", StringComparison.OrdinalIgnoreCase),
             GeoXySwap = string.Equals(E("TGOS_GEO_XY_SWAP"), "true", StringComparison.OrdinalIgnoreCase),
             MinIntervalMs = int.TryParse(E("TGOS_MIN_INTERVAL_MS"), out var ms) && ms >= 0 ? ms : 1000,
+            GeoIncludeVillage = string.Equals(E("TGOS_GEO_INCLUDE_VILLAGE"), "true", StringComparison.OrdinalIgnoreCase),
+            GeoMaxDistanceM = int.TryParse(E("TGOS_GEO_MAX_DIST_M"), out var maxDist) && maxDist >= 0 ? maxDist : 200,
         };
     }
 }

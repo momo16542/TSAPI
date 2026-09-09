@@ -87,7 +87,7 @@ public sealed class TgosClient(HttpClient http, RelayConfig cfg)
 
         var body = await 送出Async(cfg.TgosGeoUrl, 表單, ct).ConfigureAwait(false);
         // 非 JSON（例：金鑰錯回的 "Length of the data to decrypt is invalid."）由 parser 丟 TgosUpstreamException
-        return TgosReverseParser.Parse(body, cfg.GeoXySwap);
+        return TgosReverseParser.Parse(body, cfg.GeoXySwap, cfg.GeoIncludeVillage);
     }
 
     /// <summary>POST form 並取回本文；連線／逾時／非 2xx 一律轉成 <see cref="TgosUpstreamException"/>。</summary>
