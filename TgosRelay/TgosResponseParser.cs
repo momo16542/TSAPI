@@ -33,7 +33,12 @@ public static class TgosResponseParser
         return new TgosHit(lon, lat, matchType, full, e.Clone());
     }
 
-    private static string? 剝XML外殼(string? 回應)
+    /// <summary>
+    /// 剝掉 ASMX 的 <c>&lt;string xmlns="http://tempuri.org/"&gt;…&lt;/string&gt;</c> 外殼，回傳裡面的字串。
+    /// 正查與反查（<see cref="TgosReverseParser"/>）共用同一份：外殼是 ASMX 給的，與是哪一支服務無關。
+    /// 不是 XML 就原樣回（有些環境直接回 JSON）；是 XML 但格式壞掉回 null。
+    /// </summary>
+    internal static string? 剝XML外殼(string? 回應)
     {
         if (string.IsNullOrWhiteSpace(回應)) return null;
         var s = 回應.Trim();

@@ -17,7 +17,8 @@ public sealed record ReverseHit(string Address, string Source, string Precision)
 /// <summary>
 /// 反查後端（座標 → 地址）。與正查 <see cref="IGeocodeBackend"/> 刻意分成兩個介面而不是加方法：
 /// 兩者的上游端點、參數、快取表、資料集授權都不同，而且**換上游的時程不一樣**——
-/// 正查已經可以換 TGOS，反查要等轉發器的 <c>/reverse</c> 上線（見 <see cref="ReverseGeocodeBackendFactory"/>）。
+/// 正查 2026-09-06 先換了 TGOS，反查等到 2026-09-09 轉發器開出 <c>/reverse</c> 才跟上
+/// （而且 TGOS 的正查／反查是兩支各自申請的服務，金鑰也各一組）。
 /// 綁在同一個介面上，就會逼出「實作了一半」的後端。
 /// </summary>
 public interface IReverseGeocodeBackend
@@ -61,11 +62,10 @@ public static class ReverseGeocodeBackendFactory
         return n switch
         {
             "NOMINATIM" => new NominatimReverseBackend(),
-            // TGOS 反查要等 GCP 轉發器開出 /reverse 端點（正查用的是 /geocode）。
-            // 這裡刻意丟例外而不是默默退回 Nominatim：設定寫了 TGOS 卻跑 Nominatim，
-            // 會讓人以為門牌精度已經生效（同正查工廠對 TGOS 缺設定的處置）。
-            "TGOS" => throw new NotSupportedException(
-                $"{設定鍵}=TGOS 尚未支援：TGOS 反查待轉發器 /reverse 上線（目前轉發器只有 /geocode 正查）"),
+            // TGOS 反查經 GCP 台灣 IP 轉發器的 /reverse（2026-09-09 上線）；缺 TGOS_RELAY_URL/KEY 時
+            // 建構子丟 GeocodeConfigurationException，刻意不默默退回 Nominatim：
+            // 設定寫了 TGOS 卻跑 Nominatim，會讓人以為門牌精度已經生效（同正查工廠的處置）。
+            "TGOS" => new TgosReverseRelayBackend(),
             _ => throw new NotSupportedException($"未知的 {設定鍵}：{名稱}"),
         };
     }

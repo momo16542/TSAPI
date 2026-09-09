@@ -184,13 +184,8 @@ public class ReverseGeocodeBackendFactoryTests
         Assert.AreEqual("NOMINATIM", ReverseGeocodeBackendFactory.建立(" nominatim ").來源);
     }
 
-    [TestMethod]
-    public void TGOS_目前不支援_訊息要說出等什麼()
-    {
-        var ex = Assert.ThrowsException<NotSupportedException>(() => ReverseGeocodeBackendFactory.建立("TGOS"));
-        StringAssert.Contains(ex.Message, ReverseGeocodeBackendFactory.設定鍵);
-        StringAssert.Contains(ex.Message, "/reverse");
-    }
+    // TGOS 反查 2026-09-09 起已支援（轉發器開出 /reverse），
+    // 選型與缺設定的行為改在 TgosReverseRelayBackendTests.工廠_TGOS不再是NotSupported 驗。
 
     [TestMethod]
     public void 未知值_丟NotSupported並指名設定鍵()

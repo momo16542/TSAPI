@@ -106,7 +106,7 @@ public class ReverseGeocodeFunctions
         }
         catch (Exception ex) when (ex is NotSupportedException or GeocodeConfigurationException)
         {
-            // REVERSE_BACKEND 設定錯誤（未知的值，或現階段設成 TGOS——反查還沒有 TGOS 後端）。
+            // REVERSE_BACKEND 設定錯誤（未知的值，或設成 TGOS 但缺 TGOS_RELAY_URL／KEY）。
             // 這是**設定問題，不會自己好**，而 ERP 端把 5xx 一律當「暫時性、稍後再試」，
             // 所以回應本文一定要指名是哪個設定錯了，否則維運者只能去 App Insights 撈 log
             // 才知道要改什麼（沿用正查 2026-09-03 審查 S4 的原則）。
