@@ -30,17 +30,23 @@ public static class LicenseSigner
     public const string 到期日格式 = "yyyy-MM-dd";
 
     /// <summary>
-    /// 組出被簽的字串（UTF-8、無 BOM）：<c>{client}|{狀態}|{到期日 or 空字串}|{寬限天數}|{簽發時間}</c>。
-    /// 例：<c>nogi|active|2027-09-05|60|2026-09-05T06:47:12Z</c>
+    /// 組出被簽的字串（UTF-8、無 BOM）：
+    /// <c>{client}|{ediid}|{狀態}|{到期日 or 空字串}|{寬限天數}|{簽發時間}</c>。
+    /// 例：<c>nogi01|twvzqr69h6|active|2027-09-05|60|2026-09-05T06:47:12Z</c>
     ///
     /// 獨立成 public 方法是為了**兩側可以拿同一組固定測試向量對答案**：
     /// 客戶端驗簽失敗時，第一個要排除的就是「兩邊組字串的規則不一樣」
     /// （少一個分隔符、到期日補了 null 字樣、時間帶了毫秒——外觀都看不出來）。
     /// 狀態 none 時到期日為 null，這裡固定換成空字串（不是字面 "null"）。
+    ///
+    /// 2026-09-11 契約變更：第二段插入 <c>ediid</c>（交換識別）。ediid 由中央核發、
+    /// 客戶端寫回 codata.ediid 當 B2B 對外身分——放進被簽字串，客戶端與中間人就都改不了。
+    /// 尚未核發時是空字串。⚠️ 格式一改新舊客戶端互不相容；授權心跳尚未發版，現在改成本為零。
     /// </summary>
-    public static string 組被簽字串(string client, string 狀態, string? 到期日, int 寬限天數, string 簽發時間)
+    public static string 組被簽字串(string client, string ediid, string 狀態, string? 到期日, int 寬限天數, string 簽發時間)
         => string.Join('|',
             client,
+            ediid ?? string.Empty,
             狀態,
             到期日 ?? string.Empty,
             寬限天數.ToString(CultureInfo.InvariantCulture),

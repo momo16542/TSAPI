@@ -87,7 +87,7 @@ public class LicenseFunctions
             var 到期日 = 授權.到期日?.ToString(LicenseSigner.到期日格式, CultureInfo.InvariantCulture);
             var 簽發時間 = DateTime.UtcNow.ToString(LicenseSigner.簽發時間格式, CultureInfo.InvariantCulture);
             var 簽章 = LicenseSigner.簽章(私鑰,
-                LicenseSigner.組被簽字串(授權.代號, 授權.狀態, 到期日, 授權.寬限天數, 簽發時間));
+                LicenseSigner.組被簽字串(授權.代號, 授權.ediid, 授權.狀態, 到期日, 授權.寬限天數, 簽發時間));
 
             await UsageLog.WriteAsync(_logger, caller.ClientId, Dataset, 參數, 1, sw.ElapsedMilliseconds, 200,
                 授權.狀態);
@@ -100,6 +100,9 @@ public class LicenseFunctions
                 狀態 = 授權.狀態,
                 到期日,
                 寬限天數 = 授權.寬限天數,
+                // 2026-09-11 新增：交換識別，客戶端收到後寫回 codata.ediid（唯讀欄）。
+                // 尚未核發時是空字串——客戶端看到空就不動本機的值。
+                ediid = 授權.ediid,
                 簽發時間,
                 簽章,
             });
@@ -114,7 +117,7 @@ public class LicenseFunctions
         }
     }
 
-    private sealed record 授權狀態(string 代號, string 名稱, string 狀態, DateTime? 到期日, int 寬限天數);
+    private sealed record 授權狀態(string 代號, string 名稱, string 狀態, DateTime? 到期日, int 寬限天數, string ediid);
 
     /// <summary>
     /// 查 extdata.usp_license_get。判定規則（無列＝none、預設寬限 60）集中在該 proc，
@@ -139,9 +142,12 @@ public class LicenseFunctions
                 r.GetString(1),
                 r.GetString(2),
                 r.IsDBNull(3) ? null : r.GetDateTime(3),
-                r.GetInt32(4));
+                r.GetInt32(4),
+                // 第 6 欄是 2026-09-11 才加的；DB 腳本與這支程式不會同一秒部署，
+                // 舊 SP 還在時就當作尚未核發（空字串），不要因為欄位不存在整支炸掉。
+                r.FieldCount > 5 && !r.IsDBNull(5) ? r.GetString(5) : string.Empty);
         }
 
-        return new 授權狀態(caller.代號, caller.名稱, "none", null, 60);
+        return new 授權狀態(caller.代號, caller.名稱, "none", null, 60, string.Empty);
     }
 }
