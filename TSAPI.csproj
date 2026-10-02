@@ -48,4 +48,8 @@
   <ItemGroup>
     <Using Include="System.Threading.ExecutionContext" Alias="ExecutionContext" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- 暖機閘（預熱閘）與簽章快取是 internal，讓測試專案注入假段與時鐘（2026-10-02） -->
+    <InternalsVisibleTo Include="TgosRelay.Tests" />
+  </ItemGroup>
 </Project>

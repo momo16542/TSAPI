@@ -101,4 +101,17 @@ public class LicenseSignerTests
         });
         Assert.IsTrue(結果.All(x => x));
     }
+
+    [TestMethod]
+    public void 私鑰快取項ToString_不印出私鑰()
+    {
+        var (私鑰, _) = 自產金鑰();
+        LicenseSigner.簽章(私鑰, "x");
+        var 快取 = LicenseSigner.目前快取;
+        Assert.IsNotNull(快取);
+        var 字串 = 快取.ToString();
+        Assert.IsFalse(字串.Contains(私鑰));
+        Assert.IsFalse(字串.Contains(Convert.ToBase64String(快取.Pkcs8)));
+        Assert.AreEqual("私鑰快取項(內容已遮蔽)", 字串);
+    }
 }
