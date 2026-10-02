@@ -40,13 +40,55 @@ public class LicenseFunctions
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+        var 分段 = new 分段耗時(Interlocked.Increment(ref _本程序執行次數));
+        try
+        {
+            return await 執行(req, sw, 分段, ct);
+        }
+        finally
+        {
+            // 2026-10-02：分段耗時（看冷路徑卡在哪一段）。worker 沒接 App Insights SDK，
+            // SQL／HTTP dependency 不會被收集，只能靠這行 trace 切開「驗金鑰／查授權／簽章／寫用量」。
+            // 第幾次＝本 worker 程序第幾個授權請求，1 就是冷路徑（除非暖機端點先跑過）。-1＝沒走到那一段。
+            _logger.LogInformation(
+                "License 分段耗時 第{第幾次}次 驗金鑰={驗金鑰}ms 查授權={查授權}ms 簽章={簽章}ms 寫用量={寫用量}ms 總={總}ms 狀態碼={狀態碼}",
+                分段.第幾次, 分段.驗金鑰, 分段.查授權, 分段.簽章, 分段.寫用量, sw.ElapsedMilliseconds, 分段.狀態碼);
+        }
+    }
+
+    /// <summary>本 worker 程序收過幾個授權請求（分段耗時 log 用來區分冷熱）。</summary>
+    private static int _本程序執行次數;
+
+    private sealed class 分段耗時(int 第幾次)
+    {
+        public int 第幾次 { get; } = 第幾次;
+        public long 驗金鑰 { get; set; } = -1;
+        public long 查授權 { get; set; } = -1;
+        public long 簽章 { get; set; } = -1;
+        public long 寫用量 { get; set; } = -1;
+        public int 狀態碼 { get; set; }
+    }
+
+    /// <summary>寫用量並記下耗時與狀態碼（UsageLog 自己吞例外，這裡不會丟）。</summary>
+    private async Task 寫用量(分段耗時 分段, int? clientId, string? 參數, int? 回傳筆數, long 耗時毫秒, int 狀態碼, string? 備註)
+    {
+        var t = Stopwatch.StartNew();
+        await UsageLog.WriteAsync(_logger, clientId, Dataset, 參數, 回傳筆數, 耗時毫秒, 狀態碼, 備註);
+        分段.寫用量 = t.ElapsedMilliseconds;
+        分段.狀態碼 = 狀態碼;
+    }
+
+    private async Task<HttpResponseData> 執行(HttpRequestData req, Stopwatch sw, 分段耗時 分段, CancellationToken ct)
+    {
         var 參數 = req.Url.Query;
 
         ApiCaller? caller;
+        var 段 = Stopwatch.StartNew();
         try
         {
             req.Headers.TryGetValues(ApiAuth.HeaderName, out var keys);
             caller = await ApiAuth.VerifyAsync(keys?.FirstOrDefault(), ct);
+            分段.驗金鑰 = 段.ElapsedMilliseconds;
         }
         catch (Exception ex)
         {
@@ -54,8 +96,9 @@ public class LicenseFunctions
             // 不接的話例外直接冒出 Function：host 回一個沒有本文的 500、
             // api_usage 一列都不會有、自家 log 也沒有——
             // 就成了「全體客戶端被擋在門外，而中央完全看不出發生過什麼」。
+            分段.驗金鑰 = 段.ElapsedMilliseconds;
             _logger.LogError(ex, "驗金鑰失敗（多半是中央庫連不上）");
-            await UsageLog.WriteAsync(_logger, null, Dataset, 參數, null, sw.ElapsedMilliseconds, 500,
+            await 寫用量(分段, null, 參數, null, sw.ElapsedMilliseconds, 500,
                 "驗金鑰失敗 " + ex.GetType().Name + " " + ex.Message);
             return await ApiPipeline.Json(req, HttpStatusCode.InternalServerError,
                 new { error = "授權查詢失敗，請聯絡提供方" });
@@ -65,7 +108,7 @@ public class LicenseFunctions
         {
             // 不細分「金鑰不存在／已撤銷／客戶停用」——避免用回應內容幫人試金鑰（同 ApiPipeline）。
             // client_id 記 NULL 但仍要寫，那才看得出設定錯誤或有人在試金鑰。
-            await UsageLog.WriteAsync(_logger, null, Dataset, 參數, null, sw.ElapsedMilliseconds, 401, "金鑰無效");
+            await 寫用量(分段, null, 參數, null, sw.ElapsedMilliseconds, 401, "金鑰無效");
             return await ApiPipeline.Json(req, HttpStatusCode.Unauthorized, new { error = "金鑰無效或已停用" });
         }
 
@@ -74,7 +117,7 @@ public class LicenseFunctions
         if (私鑰 is null)
         {
             _logger.LogError("app setting {設定} 未設定，無法簽發授權回應", LicenseSigner.私鑰環境變數);
-            await UsageLog.WriteAsync(_logger, caller.ClientId, Dataset, 參數, null, sw.ElapsedMilliseconds, 500,
+            await 寫用量(分段, caller.ClientId, 參數, null, sw.ElapsedMilliseconds, 500,
                 "缺 " + LicenseSigner.私鑰環境變數);
             return await ApiPipeline.Json(req, HttpStatusCode.InternalServerError,
                 new { error = "伺服器未設定簽章金鑰" });
@@ -82,14 +125,18 @@ public class LicenseFunctions
 
         try
         {
+            段.Restart();
             var 授權 = await 查授權(caller, ct);
+            分段.查授權 = 段.ElapsedMilliseconds;
 
+            段.Restart();
             var 到期日 = 授權.到期日?.ToString(LicenseSigner.到期日格式, CultureInfo.InvariantCulture);
             var 簽發時間 = DateTime.UtcNow.ToString(LicenseSigner.簽發時間格式, CultureInfo.InvariantCulture);
             var 簽章 = LicenseSigner.簽章(私鑰,
                 LicenseSigner.組被簽字串(授權.代號, 授權.ediid, 授權.狀態, 到期日, 授權.寬限天數, 簽發時間));
+            分段.簽章 = 段.ElapsedMilliseconds;
 
-            await UsageLog.WriteAsync(_logger, caller.ClientId, Dataset, 參數, 1, sw.ElapsedMilliseconds, 200,
+            await 寫用量(分段, caller.ClientId, 參數, 1, sw.ElapsedMilliseconds, 200,
                 授權.狀態);
 
             // 欄名逐字照契約（含中文欄名與順序）；狀態 none 時到期日為 null。
@@ -110,7 +157,7 @@ public class LicenseFunctions
         catch (Exception ex)
         {
             _logger.LogError(ex, "授權查詢失敗");
-            await UsageLog.WriteAsync(_logger, caller.ClientId, Dataset, 參數, null, sw.ElapsedMilliseconds, 500,
+            await 寫用量(分段, caller.ClientId, 參數, null, sw.ElapsedMilliseconds, 500,
                 ex.GetType().Name + " " + ex.Message);
             return await ApiPipeline.Json(req, HttpStatusCode.InternalServerError,
                 new { error = "授權查詢失敗，請聯絡提供方" });
