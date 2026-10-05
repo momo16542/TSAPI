@@ -25,6 +25,13 @@ if [ ! -f /etc/tgos-relay.env ]; then
 fi
 
 sudo cp ~/relay-upload/tgos-relay.service /etc/systemd/system/tgos-relay.service
+# 先驗證再換上：Caddyfile 有錯時 reload 失敗會接著走 restart，等於把 443 整個停掉
+# caddy validate 成功時也會往 stderr 印 info，PowerShell 5.1 會把 stderr 當錯誤中斷 deploy-relay.ps1，所以成功時靜音、失敗才印
+if ! sudo caddy validate --config ~/relay-upload/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+  echo "!! Caddyfile 驗證失敗，未換上：" >&2
+  sudo caddy validate --config ~/relay-upload/Caddyfile --adapter caddyfile
+  exit 1
+fi
 sudo cp ~/relay-upload/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl daemon-reload
 sudo systemctl enable --now tgos-relay

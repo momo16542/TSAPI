@@ -3,7 +3,24 @@
 tgos-relay.yanyue.io {
 	reverse_proxy 127.0.0.1:5000
 	encode gzip
+	# 存取記錄是查「誰連過」的唯一來源（client_ip、時間、路徑、狀態碼），所以要留；
+	# 但 Caddy 預設會把請求標頭與完整網址一起記下來，只遮 Cookie／Authorization 這類標準標頭：
+	#  - X-Relay-Key（轉發器金鑰）會明碼落檔
+	#  - ?address= / ?lat=&lon=（客戶地址、工地座標）會落檔，繞過程式「log 不記地址」的設計
+	#    （TGOS 使用規定第七條第 8 款：資料不得對外流通，log 也算）
+	# 2026-10-05 實查兩者都已在檔內，故在記錄層刪掉；查詢參數只刪這三個，其他照記。
 	log {
 		output file /var/log/caddy/access.log
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Relay-Key delete
+				request>uri query {
+					delete address
+					delete lat
+					delete lon
+				}
+			}
+		}
 	}
 }

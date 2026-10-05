@@ -32,6 +32,16 @@ builder.Services.AddHttpClient<TgosClient>(c =>
 });
 
 var app = builder.Build();
+
+// 前面隔著同一台的 Caddy，Connection.RemoteIpAddress 永遠是 127.0.0.1——「401 來源」那行因此一直看不出是誰。
+// 改讀 Caddy 帶來的 X-Forwarded-For。只信任本機（KnownProxies 預設就只有 loopback），
+// 外部直接偽造的 X-Forwarded-For 不會被採信；Caddy 也不會轉送不受信任來源自帶的這個標頭。
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                     | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+});
+
 var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "?";
 var log = app.Logger;
 log.LogInformation("tgos-relay {Version} 啟動；RELAY_KEY={RelayKey} TGOS 金鑰={Tgos} GEO 金鑰={Geo} XY_SWAP={Swap}/{GeoSwap} 間隔={Ms}ms 里鄰={Village} 距離門檻={MaxDist}m",
