@@ -151,4 +151,22 @@ public class GeocodeCacheTtlPolicyTests
         Environment.SetEnvironmentVariable(GeocodeCache.設定鍵_Tgos保留時數, "-5");
         Assert.AreEqual(TimeSpan.FromHours(24), GeocodeCache.找到保留時數("TGOS"));
     }
+
+    [TestMethod]
+    public void 查無保留_免費來源維持7天()
+    {
+        Assert.AreEqual(TimeSpan.FromDays(7), GeocodeCache.查無保留時間("NOMINATIM"));
+        Assert.AreEqual(TimeSpan.FromDays(7), GeocodeCache.查無保留時間(null));
+    }
+
+    [TestMethod]
+    public void 查無保留_TGOS不超過找到的保留時間()
+    {
+        // 2026-10-14 事故：TGOS 短暫回空、被寫成查無留 7 天，恢復後仍卡著
+        Assert.AreEqual(TimeSpan.FromHours(24), GeocodeCache.查無保留時間("TGOS"));
+        Environment.SetEnvironmentVariable(GeocodeCache.設定鍵_Tgos保留時數, "6");
+        Assert.AreEqual(TimeSpan.FromHours(6), GeocodeCache.查無保留時間("TGOS"));
+        Environment.SetEnvironmentVariable(GeocodeCache.設定鍵_Tgos保留時數, "720");   // 找到設得比 7 天長也封頂 7 天
+        Assert.AreEqual(TimeSpan.FromDays(7), GeocodeCache.查無保留時間("TGOS"));
+    }
 }

@@ -68,17 +68,50 @@ public class TgosReverseParserTests
         Assert.AreEqual("95", hit!.MatchType);
     }
 
+    /// <summary>2026-10-15 真 TGOS 實測（中央山脈 121.1,23.47）的查無回應，原樣。</summary>
+    private const string 真查無 =
+        """{"Info":[{"Input":"POINT(260215.396342964 2596332.70613954)","SRS":"EPSG:4326","Buffer":"0","Total":"0"}],"AddressList":[]}""";
+
+    [DataTestMethod]
+    [DataRow(真查無)]
+    [DataRow("""{"Info":[{"Total":0}],"AddressList":[]}""")]       // Total 給數字也認
+    [DataRow("""{"Info":[{"Total":"0"}]}""")]                      // 沒有 AddressList 欄也算
+    public void TGOS明講Total0_回null代表查無(string body)
+    {
+        Assert.IsNull(TgosReverseParser.Parse(body));
+        // ASMX 外殼包起來也一樣
+        Assert.IsNull(TgosReverseParser.Parse("<string xmlns=\"http://tempuri.org/\">" + System.Security.SecurityElement.Escape(body) + "</string>"));
+    }
+
+    /// <summary>
+    /// 2026-10-14 事故的回歸測試：TGOS 回了合法 JSON 卻沒有地址、也沒說 Total=0，
+    /// 舊版當查無 → 中央寫進快取 → TGOS 恢復後仍卡著查無。現在一律是上游異常（502、不寫快取）。
+    /// </summary>
     [DataTestMethod]
     [DataRow("")]
     [DataRow("   ")]
     [DataRow("[]")]
-    [DataRow("""{"AddressList":[]}""")]
-    [DataRow("""{"Message":"查無資料"}""")]                       // 沒有地址欄
-    [DataRow("""{"FULL_ADDR":"   "}""")]                          // 有地址欄但值是空白
+    [DataRow("""{"AddressList":[]}""")]                           // 沒有 Info／Total
+    [DataRow("""{"Message":"查無資料"}""")]
+    [DataRow("""{"FULL_ADDR":"   "}""")]
+    [DataRow("""{"Info":[{"Total":"3"}],"AddressList":[]}""")]   // 說有 3 筆卻是空陣列
+    [DataRow("""{"Info":[{"Total":"0"}],"AddressList":[{"FULL_ADDR":"   "}]}""")] // AddressList 有東西卻撿不到地址
+    [DataRow("""{"Info":[{"IsSuccess":"False","InfoCode":"9"}]}""")]
     [DataRow("<string xmlns=\"x\">[]</string>")]
-    public void 找不到地址_回null代表查無(string body)
+    public void 沒地址也不是Total0_是上游異常不是查無(string body)
     {
-        Assert.IsNull(TgosReverseParser.Parse(body));
+        Assert.ThrowsException<TgosUpstreamException>(() => TgosReverseParser.Parse(body));
+    }
+
+    [TestMethod]
+    public void 異常摘要_留Info各欄但不落查詢座標()
+    {
+        var body = """{"Info":[{"Input":"POINT(307016.45 2769551.66)","SRS":"EPSG:4326","Total":"","Msg":"配額已用完"}],"AddressList":[]}""";
+        var ex = Assert.ThrowsException<TgosUpstreamException>(() => TgosReverseParser.Parse(body));
+        StringAssert.Contains(ex.Message, "Msg=配額已用完");
+        StringAssert.Contains(ex.Message, "AddressList筆數=0");
+        Assert.IsFalse(ex.Message.Contains("307016"), "查詢點座標不可進 log／502 訊息");
+        Assert.IsFalse(ex.Message.Contains("Input"), "Input 欄整個略過");
     }
 
     [TestMethod]

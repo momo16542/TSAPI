@@ -50,6 +50,19 @@ public static class GeocodeCache
         return TimeSpan.FromHours(hours);
     }
 
+    /// <summary>
+    /// 「查無」列依來源的保留時間：<see cref="查無保留天數"/>，但**不超過該來源「找到」的保留時間**。
+    ///
+    /// 2026-10-14 事故：TGOS 反查短暫回了一批空結果，被寫成查無留 7 天；TGOS 隔天就恢復，
+    /// 「找到」只留 24 小時的來源，「查無」卻留 7 天，那幾個座標要卡到第 7 天才會重問。
+    /// 上游的暫時性故障最容易長成「查無」，所以查無不應比找到活得久。
+    /// </summary>
+    public static TimeSpan 查無保留時間(string? 來源)
+    {
+        var 上限 = TimeSpan.FromDays(查無保留天數);
+        return 找到保留時數(來源) is { } 找到 && 找到 < 上限 ? 找到 : 上限;
+    }
+
     /// <summary>這個來源的結果可不可以寫進中央快取（TGOS 保留時數 0＝不寫）。</summary>
     public static bool 可寫快取(string? 來源) => 找到保留時數(來源) is not { Ticks: 0 };
 
@@ -97,7 +110,7 @@ public static class GeocodeCache
         if (row is null) return null;
 
         // 過期的「查無」＝視同未命中，讓呼叫端再問一次上游
-        if (!row.找到 && row.建立時間 < DateTime.UtcNow.AddDays(-查無保留天數)) return null;
+        if (!row.找到 && row.建立時間 < DateTime.UtcNow - 查無保留時間(row.Source)) return null;
 
         // 「找到」但來源有保留上限（TGOS 短效去重）且已過期＝視同未命中
         if (row.找到 && 找到保留時數(row.Source) is { } 上限 && row.建立時間 < DateTime.UtcNow - 上限) return null;

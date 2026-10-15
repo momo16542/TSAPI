@@ -22,9 +22,9 @@ public sealed record TgosReverseHit(string Address, double? Lon, double? Lat, st
 /// 且值非空白的字串欄，把它所在的物件當成命中，順手撈出 X/Y 與任何像 match／score 的欄位。
 /// 拿到真金鑰、看過真回應之後再收斂成明確欄名（同 <see cref="TgosResponseParser"/> 當初面對 QueryAddr 的處境）。
 ///
-/// 「查無」與「上游故障」刻意分開：找不到地址欄 → 回 null（查無，端點回 found=false）；
-/// 剝掉 ASMX 的 &lt;string&gt; 外殼之後根本不是 JSON → 丟 <see cref="TgosUpstreamException"/>（502），
-/// 因為那代表金鑰錯／服務改版／被擋，把它當「查無」會讓錯誤被靜靜吞掉。
+/// 「查無」與「上游故障」刻意分開：找不到地址欄**且** TGOS 明講 <c>Total=0</c> → 回 null（查無，端點回 found=false）；
+/// 找不到地址欄但不是 Total=0、空本文、剝掉 ASMX 的 &lt;string&gt; 外殼之後根本不是 JSON → 丟 <see cref="TgosUpstreamException"/>（502），
+/// 因為那代表金鑰錯／服務改版／被擋，把它當「查無」會讓錯誤被靜靜吞掉（2026-10-14 真的發生過，見 <see cref="Parse"/>）。
 /// </summary>
 public static class TgosReverseParser
 {
@@ -38,7 +38,8 @@ public static class TgosReverseParser
     public static TgosReverseHit? Parse(string? 回應, bool xySwap = false, bool includeVillage = false)
     {
         var json = TgosResponseParser.剝XML外殼(回應);
-        if (string.IsNullOrWhiteSpace(json)) return null;
+        // 真的查無時 TGOS 會明講 Total=0（見 明確查無），空本文不是查無而是上游異常
+        if (string.IsNullOrWhiteSpace(json)) throw new TgosUpstreamException("TGOS 反查回應是空的");
 
         JsonDocument doc;
         try
@@ -54,7 +55,14 @@ public static class TgosReverseParser
         using (doc)
         {
             var 命中 = 找第一個含地址的物件(doc.RootElement);
-            if (命中 == null) return null;
+            if (命中 == null)
+            {
+                if (明確查無(doc.RootElement)) return null;
+                // 2026-10-14 事故：TGOS 對 20 筆市區座標都很快回了「沒有地址」的 JSON，當時一律當查無，
+                // 中央把它寫進快取，TGOS 恢復後仍卡著回查無；原始本文也沒留下，事後查不出 TGOS 回了什麼。
+                // 所以只有 TGOS 明講 Total=0 才算查無，其餘一律當上游異常（502、不寫快取），並留摘要給維運。
+                throw new TgosUpstreamException($"TGOS 反查回應沒有地址也不是 Total=0：{回應摘要(doc.RootElement)}");
+            }
 
             var (e, 地址) = 命中.Value;
             double? lon = null, lat = null;
@@ -102,6 +110,46 @@ public static class TgosReverseParser
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// TGOS 明講「查無」的形狀（2026-10-15 以中央山脈、台灣海峽兩點實測）：
+    /// <c>{"Info":[{"Input":"POINT(…)","SRS":"EPSG:4326","Buffer":"0","Total":"0"}],"AddressList":[]}</c>。
+    /// 判準：<c>Info</c> 裡有一筆 <c>Total</c> 為 0（字串或數字皆可），且 <c>AddressList</c> 不存在或是空陣列。
+    /// </summary>
+    private static bool 明確查無(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        if (root.TryGetProperty("AddressList", out var list)
+            && !(list.ValueKind == JsonValueKind.Array && list.GetArrayLength() == 0)) return false;
+        if (!root.TryGetProperty("Info", out var info) || info.ValueKind != JsonValueKind.Array) return false;
+        foreach (var it in info.EnumerateArray())
+        {
+            if (it.ValueKind == JsonValueKind.Object && 取數字(it, "Total", out var total) && total == 0) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 異常回應的摘要（進 log 與 502 訊息）：頂層欄名＋<c>Info</c> 各欄的值，**跳過 <c>Input</c>**
+    /// ——那是查詢點的投影座標，工地位置不能進 log（使用規定第七條第 8 款）。截 300 字。
+    /// </summary>
+    private static string 回應摘要(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return $"頂層是 {root.ValueKind}";
+        var 片段 = new List<string> { "欄位=" + string.Join(",", root.EnumerateObject().Select(p => p.Name)) };
+        if (root.TryGetProperty("Info", out var info) && info.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in info.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.Object))
+            {
+                片段.Add("Info{" + string.Join(",", it.EnumerateObject()
+                    .Where(p => !p.NameEquals("Input"))
+                    .Select(p => $"{p.Name}={取字串值(p.Value) ?? p.Value.ValueKind.ToString()}")) + "}");
+            }
+        }
+        if (root.TryGetProperty("AddressList", out var list) && list.ValueKind == JsonValueKind.Array)
+            片段.Add($"AddressList筆數={list.GetArrayLength()}");
+        return 截短(string.Join(" ", 片段), 300);
     }
 
     /// <summary>欄名含 ADDR 或 FULL 就當地址欄（FULL_ADDR／ADDRESS／FULLADDRESS／Addr…）。</summary>
@@ -172,5 +220,5 @@ public static class TgosReverseParser
     private static string? 取字串(JsonElement e, string 名)
         => e.TryGetProperty(名, out var v) ? 取字串值(v) : null;
 
-    private static string 截短(string s) => s.Length <= 200 ? s : s.Substring(0, 200) + "…";
+    private static string 截短(string s, int max = 200) => s.Length <= max ? s : s.Substring(0, max) + "…";
 }

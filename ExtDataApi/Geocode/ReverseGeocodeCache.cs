@@ -121,7 +121,8 @@ public static class ReverseGeocodeCache
         if (row is null) return null;
 
         // 過期的「查無」＝視同未命中，讓呼叫端再問一次上游
-        if (!row.找到 && row.建立時間 < DateTime.UtcNow.AddDays(-查無保留天數)) return null;
+        // （TGOS 列不超過「找到」的 24h，見 GeocodeCache.查無保留時間——2026-10-14 事故）
+        if (!row.找到 && row.建立時間 < DateTime.UtcNow - GeocodeCache.查無保留時間(row.Source)) return null;
 
         // 「找到」但來源有保留上限（TGOS 短效去重）且已過期＝視同未命中
         if (row.找到 && 找到保留時數(row.Source) is { } 上限 && row.建立時間 < DateTime.UtcNow - 上限) return null;
