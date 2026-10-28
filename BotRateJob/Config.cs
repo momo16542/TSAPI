@@ -22,6 +22,9 @@ internal static class Config
     public static string? TelegramThreadId =>
         Environment.GetEnvironmentVariable("TELEGRAM_THREAD_ID") ?? "2";
 
+    /// <summary>JobWatch 回報網址（https://jobs.stonedemo.com/ping/…）。未設定或 DRY_RUN 時不回報。</summary>
+    public static string? JobWatchUrl => DryRun ? null : Environment.GetEnvironmentVariable("JOBWATCH_URL");
+
     /// <summary>跳過 CSV 直接走表格解析。用於驗證備援路徑，或 CSV 端點哪天失效時的臨時開關。</summary>
     public static bool ForceTableParse
     {

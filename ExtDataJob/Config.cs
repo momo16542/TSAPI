@@ -51,6 +51,9 @@ internal static class Config
 
     public static string? KeyVaultUrl => Environment.GetEnvironmentVariable("KEY_VAULT_URL");
 
+    /// <summary>JobWatch 回報網址（https://jobs.stonedemo.com/ping/…）。未設定或 DRY_RUN 時不回報。</summary>
+    public static string? JobWatchUrl => DryRun ? null : Environment.GetEnvironmentVariable("JOBWATCH_URL");
+
     public static string TelegramChatId =>
         Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID") ?? "-1003784964525";
 

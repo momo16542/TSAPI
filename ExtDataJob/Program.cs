@@ -17,7 +17,9 @@ using var loggerFactory = LoggerFactory.Create(b => b
 
 var logger = loggerFactory.CreateLogger("ExtDataJob");
 var notifier = new Notifier(logger);
+var jobWatch = new JobWatch(Config.JobWatchUrl, logger);
 var summary = new List<string>();
+await jobWatch.StartAsync();
 
 try
 {
@@ -104,6 +106,7 @@ try
     var text = summary.Count > 0 ? string.Join("；", summary) : "沒有需要寫入的資料";
     logger.LogInformation("完成：{Text}", text);
     if (!Config.DryRun) await notifier.SendAsync($"外部資料更新成功：{text}");
+    await jobWatch.SuccessAsync(text);
     return 0;
 }
 catch (Exception ex)
@@ -113,6 +116,7 @@ catch (Exception ex)
     {
         await notifier.SendAsync($"外部資料更新失敗：{ex.GetType().Name} {ex.Message}");
     }
+    await jobWatch.FailAsync(ex.ToString(), 1);
     return 1;   // 非 0 讓 Container Apps Job 標記為失敗
 }
 

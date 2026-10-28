@@ -11,6 +11,8 @@ using var loggerFactory = LoggerFactory.Create(builder => builder
 
 var logger = loggerFactory.CreateLogger("BotRateJob");
 var notifier = new TelegramNotify(logger);
+var jobWatch = new JobWatch(Config.JobWatchUrl, logger);
+await jobWatch.StartAsync();
 
 try
 {
@@ -53,6 +55,7 @@ try
 
     await new CosmosWriter(logger).WriteAsync(rates);
     await notifier.SendAsync(summary);
+    await jobWatch.SuccessAsync(summary);
     return 0;
 }
 catch (Exception ex)
@@ -62,6 +65,7 @@ catch (Exception ex)
     {
         await notifier.SendAsync($"匯率更新失敗：{ex.GetType().Name} {ex.Message}");
     }
+    await jobWatch.FailAsync(ex.ToString(), 1);
     // 非 0 結束碼會讓 Container Apps Job 標記為失敗
     return 1;
 }
