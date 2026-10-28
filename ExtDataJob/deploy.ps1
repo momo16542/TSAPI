@@ -23,6 +23,8 @@ param(
     [switch]$SkipPush,
     [switch]$RunNow,
     [string]$DockerHubUser = 'momo16542',
+    # 一律指定訂閱，不靠 az 的預設訂閱（這台的預設常是別的訂閱，會跑去那邊建一個新的 job）
+    [string]$Subscription  = '0d48a058-d7c8-494e-9afd-0e29273131c5',
     [string]$ResourceGroup = 'Yanyue',
     [string]$Environment   = 'yanyue-aca-env',
     [string]$JobName       = 'extdata-job',
@@ -36,8 +38,11 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
 $identityName = 'extdata-job-identity'
-$identityClientId = 'a91612f0-df85-4335-8fee-2de1bc4b7d3c'
-$identityResourceId = "/subscriptions/0d48a058-d7c8-494e-9afd-0e29273131c5/resourcegroups/$ResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$identityName"
+# client id 與資源 id 每次向 Azure 查，不寫死：變更目錄、搬訂閱後受控識別會重建，舊的 id 就失效了
+$identity = az identity show --subscription $Subscription -g $ResourceGroup -n $identityName --query "{clientId:clientId, id:id}" -o json 2>$null | ConvertFrom-Json
+if (-not $identity) { throw "找不到受控識別 $identityName（az 登入的帳號、訂閱對不對？）" }
+$identityClientId = $identity.clientId
+$identityResourceId = $identity.id
 
 # 映像標籤用 git sha，才知道線上跑的是哪一版（同 botrate-job 的慣例）。
 # **兩個 repo 都要帶**：映像內容同時取決於 TSAPI（job 本體）與 ERPV2（四個共用專案），
@@ -76,7 +81,7 @@ if (-not $SkipPush) {
 # 所以：自己看 $LASTEXITCODE，且參數整包當**陣列**傳，PowerShell 不去解析裡面的內容。
 $ErrorActionPreference = 'Continue'
 function Invoke-Az([string[]]$AzArgs) {
-    $out = & az @AzArgs 2>&1
+    $out = & az @AzArgs --subscription $Subscription 2>&1
     $clean = $out | Where-Object { "$_" -notmatch '^WARNING' }
     if ($LASTEXITCODE -ne 0) {
         $clean | ForEach-Object { Write-Host $_ }
@@ -96,7 +101,7 @@ $envVars = @(
     "TELEGRAM_CHAT_ID=-1003784964525"
 )
 
-& az containerapp job show -g $ResourceGroup -n $JobName -o none 2>&1 | Out-Null
+& az containerapp job show --subscription $Subscription -g $ResourceGroup -n $JobName -o none 2>&1 | Out-Null
 $found = ($LASTEXITCODE -eq 0)
 
 if (-not $found) {
