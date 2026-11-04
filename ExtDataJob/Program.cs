@@ -19,6 +19,10 @@ var logger = loggerFactory.CreateLogger("ExtDataJob");
 var notifier = new Notifier(logger);
 var jobWatch = new JobWatch(Config.JobWatchUrl, logger);
 var summary = new List<string>();
+// 每個來源各自成敗：失敗的記在這裡，其他來源照常寫入，全部做完才一起回報失敗。
+// 2026-11-04 起：之前是一個來源抓不到就整支 throw，行情網站 503 連帶兩份公會資料也沒寫——
+// 反過來公會掛掉也會拖累行情，而行情是每日報價、沒有歷史可補，少一天就永遠少一天。
+var failures = new List<string>();
 await jobWatch.StartAsync();
 
 try
@@ -40,13 +44,8 @@ try
         logger.LogInformation("  {Key,-14} {Status,-8} {Bytes,10:N0} bytes  {Msg}",
             r.SourceKey, r.Status, r.ByteCount, r.Message);
     }
-    if (run.FailedCount > 0)
-    {
-        // 有來源失敗就整支算失敗——寧可吵，也不要靜靜地少一份資料
-        throw new InvalidOperationException(
-            $"{run.FailedCount} 個來源抓取失敗：" +
-            string.Join("；", run.Results.Where(x => !x.IsOk).Select(x => $"{x.SourceKey} {x.Message}")));
-    }
+    // 抓取失敗的先記下（整支最後仍算失敗——寧可吵，也不要靜靜地少一份資料），其餘來源照常往下寫
+    failures.AddRange(run.Results.Where(x => !x.IsOk).Select(x => $"{x.SourceKey} 抓取失敗：{x.Message}"));
 
     // ── 2. 解析 ＋ 3. 寫入 ──────────────────────────────────
     // **只解析近幾個月**：2026-09-01 實測，整包 285,438 列寫進 Basic 層級要 7.4 分鐘，
@@ -62,48 +61,69 @@ try
     // 2026-09-01 實跑第二次時就踩到：三個來源全 Skipped → 「沒有需要寫入的資料」。
     foreach (var result in run.Results.Where(x => x.IsOk && !string.IsNullOrEmpty(x.SavedPath)))
     {
-        var 車輛別 = TtvmaLongFormatEngine.車輛別FromSourceKey(result.SourceKey);
-
-        if (車輛別 is not null)
+        // 一個來源解析／寫入失敗（檔案格式變了、merge proc 出錯…）只記下來，不擋後面的來源
+        try
         {
-            var warnings = new List<string>();
-            using var wb = NpoiSpreadsheetWorkbook.Open(result.SavedPath);
-            var rows = TtvmaLongFormatEngine.ParseWorkbook(
-                wb, 車輛別, Path.GetFileName(result.SavedPath), warnings, since, result.FetchedAt);
-            foreach (var w in warnings) logger.LogWarning("  解析警告：{W}", w);
+            var 車輛別 = TtvmaLongFormatEngine.車輛別FromSourceKey(result.SourceKey);
 
-            logger.LogInformation("  {Key}：解析 {Count} 列", result.SourceKey, rows.Count);
-            if (writer is null) { summary.Add($"{車輛別} 解析 {rows.Count} 列（DRY_RUN）"); continue; }
+            if (車輛別 is not null)
+            {
+                var warnings = new List<string>();
+                using var wb = NpoiSpreadsheetWorkbook.Open(result.SavedPath);
+                var rows = TtvmaLongFormatEngine.ParseWorkbook(
+                    wb, 車輛別, Path.GetFileName(result.SavedPath), warnings, since, result.FetchedAt);
+                foreach (var w in warnings) logger.LogWarning("  解析警告：{W}", w);
 
-            var merged = writer.UpsertTtvma(rows);
-            logger.LogInformation("  {Key}：{Merged}", result.SourceKey, merged);
-            summary.Add($"{車輛別} 新增 {merged.新增}／更新 {merged.更新}");
+                logger.LogInformation("  {Key}：解析 {Count} 列", result.SourceKey, rows.Count);
+                if (writer is null) { summary.Add($"{車輛別} 解析 {rows.Count} 列（DRY_RUN）"); continue; }
+
+                var merged = writer.UpsertTtvma(rows);
+                logger.LogInformation("  {Key}：{Merged}", result.SourceKey, merged);
+                summary.Add($"{車輛別} 新增 {merged.新增}／更新 {merged.更新}");
+            }
+            else if (result.SourceKey == "METALPRICE")
+            {
+                // 行情來源抓取時就已解析成 JSON 落地，這裡直接讀回來
+                var rows = JsonConvert.DeserializeObject<List<MetalPriceRow>>(
+                               File.ReadAllText(result.SavedPath)) ?? new List<MetalPriceRow>();
+                logger.LogInformation("  {Key}：讀入 {Count} 列", result.SourceKey, rows.Count);
+                if (writer is null) { summary.Add($"行情 {rows.Count} 列（DRY_RUN）"); continue; }
+
+                // 品項主檔的權威來源是程式端的 MetalItemCatalog。**必須先於行情同步**：
+                // 行情的「品號」是 merge proc 用「交易所＋名稱」對品項主檔帶出來的，
+                // 反過來排的話，全新的庫第一次跑時主檔還是空的，整批品號會寫成 NULL。
+                var itemMerged = writer.UpsertMetalItem(MetalPriceTable.BuildItems());
+                logger.LogInformation("  品項主檔：{Merged}", itemMerged);
+
+                var merged = writer.UpsertMetalPrice(MetalPriceTable.Build(rows, result.FetchedAt));
+                logger.LogInformation("  {Key}：{Merged}", result.SourceKey, merged);
+                summary.Add($"行情 新增 {merged.新增}／更新 {merged.更新}");
+            }
+            else
+            {
+                logger.LogWarning("  {Key}：沒有對應的寫入路徑，略過", result.SourceKey);
+            }
         }
-        else if (result.SourceKey == "METALPRICE")
+        catch (Exception ex)
         {
-            // 行情來源抓取時就已解析成 JSON 落地，這裡直接讀回來
-            var rows = JsonConvert.DeserializeObject<List<MetalPriceRow>>(
-                           File.ReadAllText(result.SavedPath)) ?? new List<MetalPriceRow>();
-            logger.LogInformation("  {Key}：讀入 {Count} 列", result.SourceKey, rows.Count);
-            if (writer is null) { summary.Add($"行情 {rows.Count} 列（DRY_RUN）"); continue; }
-
-            // 品項主檔的權威來源是程式端的 MetalItemCatalog。**必須先於行情同步**：
-            // 行情的「品號」是 merge proc 用「交易所＋名稱」對品項主檔帶出來的，
-            // 反過來排的話，全新的庫第一次跑時主檔還是空的，整批品號會寫成 NULL。
-            var itemMerged = writer.UpsertMetalItem(MetalPriceTable.BuildItems());
-            logger.LogInformation("  品項主檔：{Merged}", itemMerged);
-
-            var merged = writer.UpsertMetalPrice(MetalPriceTable.Build(rows, result.FetchedAt));
-            logger.LogInformation("  {Key}：{Merged}", result.SourceKey, merged);
-            summary.Add($"行情 新增 {merged.新增}／更新 {merged.更新}");
-        }
-        else
-        {
-            logger.LogWarning("  {Key}：沒有對應的寫入路徑，略過", result.SourceKey);
+            logger.LogError(ex, "  {Key}：解析／寫入失敗", result.SourceKey);
+            failures.Add($"{result.SourceKey} 解析／寫入失敗：{ex.GetType().Name} {ex.Message}");
         }
     }
 
     var text = summary.Count > 0 ? string.Join("；", summary) : "沒有需要寫入的資料";
+
+    if (failures.Count > 0)
+    {
+        // 部分成功也要亮紅（JobWatch／Telegram／Container Apps 都標失敗），訊息同時寫出哪些已經寫進去
+        var failText = $"{failures.Count} 個來源失敗：{string.Join("；", failures).TrimEnd('。')}"
+                       + (summary.Count > 0 ? $"。其餘已寫入：{text}" : "");
+        logger.LogError("部分失敗：{Text}", failText);
+        if (!Config.DryRun) await notifier.SendAsync($"外部資料更新失敗：{failText}");
+        await jobWatch.FailAsync(failText, 1);
+        return 1;   // 非 0 讓 Container Apps Job 標記為失敗
+    }
+
     logger.LogInformation("完成：{Text}", text);
     if (!Config.DryRun) await notifier.SendAsync($"外部資料更新成功：{text}");
     await jobWatch.SuccessAsync(text);
@@ -111,12 +131,14 @@ try
 }
 catch (Exception ex)
 {
+    // 走到這裡＝整支層級的錯（例如連不上中央庫），不是單一來源；先前記下的來源失敗一併帶出
     logger.LogError(ex, "外部資料更新失敗");
+    var earlier = failures.Count > 0 ? $"（另有 {string.Join("；", failures)}）" : "";
     if (!Config.DryRun)
     {
-        await notifier.SendAsync($"外部資料更新失敗：{ex.GetType().Name} {ex.Message}");
+        await notifier.SendAsync($"外部資料更新失敗：{ex.GetType().Name} {ex.Message}{earlier}");
     }
-    await jobWatch.FailAsync(ex.ToString(), 1);
+    await jobWatch.FailAsync(ex + earlier, 1);
     return 1;   // 非 0 讓 Container Apps Job 標記為失敗
 }
 
