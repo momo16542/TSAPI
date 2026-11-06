@@ -24,7 +24,7 @@ param(
     [switch]$RunNow,
     [string]$DockerHubUser = 'momo16542',
     # 一律指定訂閱，不靠 az 的預設訂閱（這台的預設常是別的訂閱，會跑去那邊建一個新的 job）
-    [string]$Subscription  = '0d48a058-d7c8-494e-9afd-0e29273131c5',
+    [string]$Subscription  = '7cff9333-1456-4935-bfcf-13db5f0ff4b7',   # 2026-11-06 起 CSP 訂閱（原 tworkerp 0d48a058 已搬空）
     [string]$ResourceGroup = 'Yanyue',
     [string]$Environment   = 'yanyue-aca-env',
     [string]$JobName       = 'extdata-job',
